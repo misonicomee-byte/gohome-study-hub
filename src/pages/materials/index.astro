@@ -1,0 +1,118 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { MATERIALS, getMaterialsByCategory } from "../../data/materials";
+
+const byCategory = getMaterialsByCategory();
+const total = MATERIALS.length;
+
+const CATEGORY_STYLES: Record<string, { gradient: string; chip: string; icon: string }> = {
+  "クリニック紹介": { gradient: "from-blue-400 to-indigo-500", chip: "bg-blue-50 text-blue-700 border-blue-200", icon: "M3 12l9-9 9 9M5 10v10h14V10" },
+  "サービス案内": { gradient: "from-emerald-400 to-teal-500", chip: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
+  "ご家族向け": { gradient: "from-rose-400 to-pink-500", chip: "bg-rose-50 text-rose-700 border-rose-200", icon: "M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a3 3 0 015.356-1.857M7 8a4 4 0 100 8 4 4 0 000-8zm10 0a3 3 0 100 6 3 3 0 000-6z" },
+  "連携先・連携方法": { gradient: "from-amber-400 to-orange-500", chip: "bg-amber-50 text-amber-700 border-amber-200", icon: "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" },
+};
+
+const AUDIENCE_LABELS: Record<string, { label: string; cls: string }> = {
+  all: { label: "全員向け", cls: "bg-gray-100 text-gray-700" },
+  patient: { label: "ご家族向け", cls: "bg-rose-100 text-rose-700" },
+  partner: { label: "医療機関向け", cls: "bg-amber-100 text-amber-700" },
+  clinic: { label: "院内向け", cls: "bg-brand-100 text-brand-700" },
+};
+---
+
+<Layout title="配布資料" description={`ごうホームクリニックが配布しているパンフレット・案内チラシ ${total}点。PDF形式でダウンロード可能。`}>
+  <!-- Hero -->
+  <section class="relative overflow-hidden bg-gradient-to-br from-indigo-50 via-white to-blue-50">
+    <div class="max-w-6xl mx-auto px-6 py-10 md:py-14">
+      <div class="flex items-center gap-4 mb-3">
+        <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-400 to-blue-500 grid place-items-center shadow-lg">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        </div>
+        <div>
+          <span class="text-xs font-bold tracking-widest text-indigo-600 uppercase">Materials</span>
+          <h1 class="text-3xl md:text-4xl font-bold text-brand-900 leading-tight">配布資料・パンフレット</h1>
+        </div>
+      </div>
+      <p class="text-brand-700 leading-relaxed max-w-3xl">
+        ごうホームクリニックの紹介資料・サービス案内・連携先向け資料を <span class="font-bold text-indigo-700">{total}点</span> PDF で公開しています。
+        ご自由にダウンロード・印刷してご活用ください。
+      </p>
+    </div>
+  </section>
+
+  <!-- Category Sections -->
+  <div class="max-w-6xl mx-auto px-6 pt-10 pb-20 space-y-12">
+    {Array.from(byCategory.entries()).map(([category, items]) => {
+      const style = CATEGORY_STYLES[category] || { gradient: "from-brand-400 to-brand-600", chip: "bg-brand-50 text-brand-700 border-brand-200", icon: "M9 12l2 2 4-4" };
+      return (
+        <section>
+          <div class="flex items-center gap-3 mb-5">
+            <div class={`w-10 h-10 rounded-xl bg-gradient-to-br ${style.gradient} grid place-items-center shadow-md`}>
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d={style.icon} />
+              </svg>
+            </div>
+            <h2 class="text-xl md:text-2xl font-bold text-brand-900">{category}</h2>
+            <span class="text-sm text-brand-500">{items.length}点</span>
+          </div>
+          <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {items.map((m) => (
+              <article class="group bg-white rounded-2xl border border-brand-100 shadow-sm hover:shadow-xl transition-shadow overflow-hidden flex flex-col">
+                <div class={`h-1.5 bg-gradient-to-r ${style.gradient}`}></div>
+                <div class="p-5 flex-1 flex flex-col">
+                  <div class="flex items-start justify-between gap-3 mb-2">
+                    <h3 class="font-bold text-brand-900 leading-snug group-hover:text-indigo-600 transition-colors">
+                      {m.title}
+                    </h3>
+                    <span class={`flex-shrink-0 text-[10px] px-2 py-0.5 rounded-full ${AUDIENCE_LABELS[m.audience]?.cls ?? "bg-gray-100"}`}>
+                      {AUDIENCE_LABELS[m.audience]?.label ?? m.audience}
+                    </span>
+                  </div>
+                  <p class="text-sm text-brand-700/80 leading-relaxed mb-4 flex-1">
+                    {m.description}
+                  </p>
+                  <div class="flex items-center gap-2 pt-3 border-t border-brand-100">
+                    <a
+                      href={`/materials/${m.filename}`}
+                      target="_blank"
+                      rel="noopener"
+                      class="inline-flex items-center gap-1.5 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12h2a2 2 0 012 2v4a2 2 0 01-2 2H7a2 2 0 01-2-2v-4a2 2 0 012-2h2m4-9v8m0 0l-3-3m3 3l3-3" />
+                      </svg>
+                      開く
+                    </a>
+                    <a
+                      href={`/materials/${m.filename}`}
+                      download
+                      class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:text-brand-700 ml-auto"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      DL
+                    </a>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      );
+    })}
+  </div>
+
+  <!-- Info Callout -->
+  <section class="max-w-6xl mx-auto px-6 pb-20">
+    <div class="bg-gradient-to-br from-brand-50 to-white rounded-2xl border border-brand-100 p-6 md:p-8">
+      <h2 class="text-lg font-bold text-brand-900 mb-2">資料の追加・更新について</h2>
+      <p class="text-brand-700 text-sm leading-relaxed">
+        新しい資料は随時追加しています。
+        印刷物のお取り寄せ・FAX送付をご希望の場合は、本院（TEL: 052-803-5005）までお問い合わせください。
+      </p>
+    </div>
+  </section>
+</Layout>
