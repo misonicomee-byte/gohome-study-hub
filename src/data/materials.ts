@@ -47,6 +47,22 @@ export const MATERIALS: Material[] = [
     category: "クリニック紹介",
     audience: "partner",
   },
+  {
+    slug: "satisfaction-survey-2025",
+    title: "2025年 診療満足度調査まとめ",
+    description: "船井総研による2025年実施の診療満足度調査の結果まとめ。",
+    filename: "satisfaction-survey-2025.pdf",
+    category: "クリニック紹介",
+    audience: "all",
+  },
+  {
+    slug: "satisfaction-survey-2024",
+    title: "2024年 診療満足度調査まとめ",
+    description: "船井総研による2024年実施の診療満足度調査の結果まとめ。",
+    filename: "satisfaction-survey-2024.pdf",
+    category: "クリニック紹介",
+    audience: "all",
+  },
 
   // ===== サービス案内 =====
   {
