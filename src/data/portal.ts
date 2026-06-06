@@ -41,7 +41,10 @@ const FETCH_OPTS: RequestInit = {
   headers: {
     "User-Agent":
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    Accept: "application/json",
+    Accept: "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    Referer: "https://gohome-clinic.com/",
   },
 };
 
@@ -52,7 +55,14 @@ export async function fetchLatestBlogPosts(limit = 6): Promise<BlogPost[]> {
   try {
     const url = `${WP_BASE}/posts?per_page=${limit}&_embed=wp:featuredmedia&_fields=id,title,link,date,excerpt,categories,tags,_links,_embedded&status=publish`;
     const res = await fetch(url, FETCH_OPTS);
-    if (!res.ok) return [];
+    if (!res.ok) {
+      const body = await res.text();
+      console.warn(
+        `[portal] blog fetch failed: status=${res.status} url=${url}\nbody[0..300]=${body.slice(0, 300)}`
+      );
+      return [];
+    }
+    console.log(`[portal] blog fetch OK: status=${res.status}`);
     const items: any[] = await res.json();
     return items.map((p) => ({
       id: p.id,
