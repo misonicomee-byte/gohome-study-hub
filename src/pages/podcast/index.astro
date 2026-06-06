@@ -1,0 +1,172 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { fetchPodcastList, getPodcastGenres, formatRelativeDate } from "../../data/portal";
+
+const episodes = await fetchPodcastList();
+const genres = getPodcastGenres(episodes);
+const total = episodes.length;
+
+// 日付降順（新しい順）
+const sorted = [...episodes].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+---
+
+<Layout title="Podcast" description={`ごうホームクリニックが配信する訪問診療・在宅医療の音声ポッドキャスト ${total} エピソード。ジャンル別に検索できます。`}>
+  <!-- Hero -->
+  <section class="relative overflow-hidden bg-gradient-to-br from-amber-50 via-white to-orange-50">
+    <div class="max-w-6xl mx-auto px-6 py-10 md:py-14">
+      <div class="flex items-center gap-4 mb-3">
+        <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 grid place-items-center shadow-lg">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+          </svg>
+        </div>
+        <div>
+          <span class="text-xs font-bold tracking-widest text-amber-600 uppercase">Podcast</span>
+          <h1 class="text-3xl md:text-4xl font-bold text-brand-900 leading-tight">音声ポッドキャスト</h1>
+        </div>
+      </div>
+      <p class="text-brand-700 leading-relaxed max-w-3xl">
+        訪問診療・在宅医療の現場知見を音声で共有しています。
+        <span class="font-bold text-amber-700">{total}</span> エピソード配信中。
+      </p>
+    </div>
+  </section>
+
+  {episodes.length === 0 ? (
+    <section class="max-w-3xl mx-auto px-6 py-20">
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-8">
+        <h2 class="text-xl font-bold text-amber-900 mb-3">⚠️ データ未取得</h2>
+        <p class="text-amber-800 leading-relaxed">
+          Podcast一覧データを取得できませんでした。GAS Web App の公開設定（Anyone access）が必要です。
+        </p>
+      </div>
+    </section>
+  ) : (
+    <>
+    <!-- 検索 & フィルタ -->
+    <section class="max-w-6xl mx-auto px-6 pt-8 pb-4">
+      <div class="bg-white rounded-2xl border border-brand-100 shadow-sm p-5 md:p-6">
+        <div class="mb-4">
+          <label class="block text-xs font-bold text-brand-700 mb-2 uppercase tracking-wide">検索</label>
+          <div class="relative">
+            <input
+              type="search"
+              id="podcast-search"
+              placeholder="タイトルで検索（例: 認知症、看取り、家族介護...）"
+              class="w-full pl-10 pr-4 py-3 rounded-xl border border-brand-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all"
+            />
+            <svg xmlns="http://www.w3.org/2000/svg" class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-brand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-brand-700 mb-2 uppercase tracking-wide">ジャンル</label>
+          <div class="flex flex-wrap gap-1.5" id="genre-buttons">
+            <button type="button" data-genre="all" class="px-3 py-1.5 rounded-full text-sm font-medium bg-amber-500 text-white shadow-sm transition-colors">
+              すべて <span class="opacity-75 ml-1">({total})</span>
+            </button>
+            {genres.map((g) => (
+              <button type="button" data-genre={g.name} class="px-3 py-1.5 rounded-full text-sm font-medium bg-white text-brand-700 border border-brand-200 hover:bg-amber-50 transition-colors">
+                {g.name} <span class="opacity-60 ml-1">({g.count})</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div class="mt-3 text-sm text-brand-600">
+        表示中: <span id="visible-count" class="font-bold text-brand-900">{total}</span> / {total} エピソード
+      </div>
+    </section>
+
+    <!-- Episode List -->
+    <section class="max-w-6xl mx-auto px-6 pb-16">
+      <ul id="podcast-list" class="divide-y divide-brand-100 bg-white rounded-2xl border border-brand-100 shadow-sm overflow-hidden">
+        {sorted.map((ep) => (
+          <li
+            class="podcast-row group"
+            data-genres={ep.genres.join(",")}
+            data-title={ep.title.toLowerCase()}
+          >
+            <a href={ep.url} target="_blank" rel="noopener" class="flex items-start gap-3 p-3 md:p-4 hover:bg-amber-50/50 transition-colors">
+              <div class="flex-shrink-0 w-24 md:w-28 aspect-video bg-brand-100 rounded overflow-hidden">
+                <img
+                  src={`https://i.ytimg.com/vi/${ep.youtubeId}/mqdefault.jpg`}
+                  alt={ep.title}
+                  loading="lazy"
+                  class="w-full h-full object-cover"
+                />
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 text-xs text-brand-500 mb-1">
+                  {ep.number !== null && (
+                    <span class="font-bold text-amber-600">#{ep.number}</span>
+                  )}
+                  {ep.date && <span>{formatRelativeDate(ep.date)}</span>}
+                  <div class="flex flex-wrap gap-1">
+                    {ep.genres.slice(0, 2).map((g) => (
+                      <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                        {g}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <h3 class="text-sm md:text-base font-semibold text-brand-900 leading-snug group-hover:text-amber-600 transition-colors line-clamp-2">
+                  {ep.number !== null ? ep.title.replace(/^\d+/, "").trim() : ep.title}
+                </h3>
+              </div>
+              <svg xmlns="http://www.w3.org/2000/svg" class="hidden md:block w-5 h-5 text-brand-400 group-hover:text-amber-600 transition-colors flex-shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7-7 7M5 12h16" />
+              </svg>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+    </>
+  )}
+
+  <script>
+    const search = document.getElementById("podcast-search") as HTMLInputElement | null;
+    const buttons = document.querySelectorAll<HTMLButtonElement>("[data-genre]");
+    const rows = document.querySelectorAll<HTMLElement>(".podcast-row");
+    const counter = document.getElementById("visible-count");
+    let currentGenre = "all";
+
+    function apply() {
+      const q = (search?.value ?? "").trim().toLowerCase();
+      let visible = 0;
+      rows.forEach((row) => {
+        const genres = (row.dataset.genres ?? "").split(",");
+        const title = row.dataset.title ?? "";
+        const matchGenre = currentGenre === "all" || genres.includes(currentGenre);
+        const matchSearch = !q || title.includes(q);
+        const show = matchGenre && matchSearch;
+        row.toggleAttribute("hidden", !show);
+        if (show) visible++;
+      });
+      if (counter) counter.textContent = visible.toString();
+    }
+
+    buttons.forEach((b) => {
+      b.addEventListener("click", () => {
+        currentGenre = b.dataset.genre ?? "all";
+        buttons.forEach((other) => {
+          const active = other.dataset.genre === currentGenre;
+          other.classList.toggle("bg-amber-500", active);
+          other.classList.toggle("text-white", active);
+          other.classList.toggle("shadow-sm", active);
+          other.classList.toggle("bg-white", !active);
+          other.classList.toggle("text-brand-700", !active);
+          other.classList.toggle("border", !active);
+          other.classList.toggle("border-brand-200", !active);
+        });
+        apply();
+      });
+    });
+
+    if (search) {
+      search.addEventListener("input", apply);
+    }
+  </script>
+</Layout>

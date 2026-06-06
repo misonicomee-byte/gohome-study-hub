@@ -19,6 +19,16 @@ export interface BlogPost {
   totalUsers?: number;
 }
 
+export interface PodcastEpisode {
+  id: string;
+  title: string;
+  date: string;
+  url: string;
+  youtubeId: string;
+  genres: string[];
+  number: number | null; // タイトル先頭の番号（例: "176水分制限..." → 176）
+}
+
 export interface InstagramPost {
   id: string;
   permalink: string;
@@ -182,6 +192,87 @@ function cleanHtml(text: string): string {
     .replace(/&#8211;/g, "–")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Podcast一覧をGAS経由で取得し、タイトルからジャンルを自動分類
+ */
+const GENRE_KEYWORDS: Array<{ name: string; patterns: RegExp[] }> = [
+  { name: "嚥下・栄養", patterns: [/嚥下|食[べ事]|栄養|食欲|低栄養|フレイル|サルコペニア|管理栄養士|食形態/, /【嚥下/, /【栄養/] },
+  { name: "感染症", patterns: [/感染|尿路|肺炎|発熱|抗菌薬|耐性菌|敗血症|消毒|清潔/] },
+  { name: "皮膚・褥瘡", patterns: [/皮膚|褥瘡|スキン|湿疹|皮膚科|肌|傷|創/] },
+  { name: "排泄ケア", patterns: [/排尿|排便|尿|便|失禁|オムツ|カテーテル|トイレ|膀胱|便秘|下痢/] },
+  { name: "認知症", patterns: [/認知症|BPSD|物忘れ|徘徊|せん妄|MCI/] },
+  { name: "メンタル", patterns: [/うつ|心の|精神|不安|気持ち|心理|孤独|ストレス|傾聴/] },
+  { name: "看取り・ACP", patterns: [/看取り|終末|ACP|人生会議|延命|意思決定|尊厳|最期|臨終|死/] },
+  { name: "糖尿病・生活習慣", patterns: [/糖尿|血糖|HbA1c|インスリン|高血圧|脂質|肥満|フット/] },
+  { name: "心疾患・呼吸器", patterns: [/心不全|心疾患|不整脈|呼吸|COPD|喘息|肺|心臓/] },
+  { name: "点滴・輸液", patterns: [/点滴|輸液|皮下|脱水|補液|【点滴/] },
+  { name: "薬剤管理", patterns: [/服薬|薬剤|処方|薬|残薬|副作用|相互作用|薬剤師/] },
+  { name: "多職種連携", patterns: [/連携|多職種|チーム|ケアマネ|訪問看護|薬剤師|理学療法|作業療法|歯科|地域包括/] },
+  { name: "家族介護", patterns: [/家族|介護者|介護負担|レスパイト|介護家族|ヤングケアラー|遠距離介護|独居/] },
+  { name: "制度・算定", patterns: [/算定|改定|加算|診療報酬|介護報酬|施設基準|【2026/] },
+  { name: "特集", patterns: [/^【.+特集】/] },
+];
+
+function detectGenres(title: string): string[] {
+  const matched: string[] = [];
+  for (const g of GENRE_KEYWORDS) {
+    if (g.patterns.some((p) => p.test(title))) matched.push(g.name);
+  }
+  return matched.length > 0 ? matched : ["その他"];
+}
+
+function extractNumber(title: string): number | null {
+  const m = title.match(/^(\d{1,4})/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+let _podcastCache: PodcastEpisode[] | null = null;
+export async function fetchPodcastList(): Promise<PodcastEpisode[]> {
+  if (_podcastCache) return _podcastCache;
+  try {
+    const url = `${GAS_URL}?api=podcast-list`;
+    const res = await fetch(url, FETCH_OPTS);
+    if (!res.ok) return [];
+    const text = await res.text();
+    if (text.startsWith("<!") || text.startsWith("<html")) {
+      console.warn("[portal] podcast GAS returned HTML — auth needed");
+      return [];
+    }
+    const json = JSON.parse(text);
+    if (json.error) {
+      console.warn("[portal] podcast GAS error:", json.error);
+      return [];
+    }
+    const arr = json.data ?? [];
+    _podcastCache = arr.map((p: any) => ({
+      id: String(p.id || p.youtubeId || ""),
+      title: String(p.title || ""),
+      date: String(p.date || ""),
+      url: String(p.url || ""),
+      youtubeId: String(p.youtubeId || p.id || ""),
+      genres: detectGenres(String(p.title || "")),
+      number: extractNumber(String(p.title || "")),
+    })) as PodcastEpisode[];
+    console.log(`[portal] podcast from GAS OK: ${_podcastCache?.length} episodes`);
+    return _podcastCache!;
+  } catch (err) {
+    console.warn("[portal] podcast fetch failed:", err);
+    return [];
+  }
+}
+
+export function getPodcastGenres(eps: PodcastEpisode[]): { name: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const ep of eps) {
+    for (const g of ep.genres) {
+      counts.set(g, (counts.get(g) ?? 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
 }
 
 export function formatRelativeDate(iso: string): string {
