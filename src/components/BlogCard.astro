@@ -33,16 +33,24 @@ const { post, rank } = Astro.props;
     )}
     <div class="p-5">
       <div class="flex items-center gap-2 text-xs text-brand-500 mb-2">
-        <span>{formatRelativeDate(post.date)}</span>
+        <span>{post.date ? formatRelativeDate(post.date) : "公開日不明"}</span>
         <span>•</span>
         <span>ブログ</span>
+        {post.pageViews !== undefined && post.pageViews > 0 && (
+          <>
+            <span>•</span>
+            <span class="text-amber-600 font-semibold">👁 {post.pageViews.toLocaleString()} views</span>
+          </>
+        )}
       </div>
       <h3 class="font-bold text-brand-900 leading-tight mb-2 group-hover:text-brand-600 transition-colors line-clamp-2">
         {post.title}
       </h3>
-      <p class="text-sm text-brand-700/80 leading-relaxed line-clamp-2">
-        {post.excerpt}
-      </p>
+      {post.excerpt && (
+        <p class="text-sm text-brand-700/80 leading-relaxed line-clamp-2">
+          {post.excerpt}
+        </p>
+      )}
     </div>
   </a>
 </article>

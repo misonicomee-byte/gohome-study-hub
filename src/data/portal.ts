@@ -7,7 +7,7 @@
  */
 
 export interface BlogPost {
-  id: number;
+  id: number | string;
   title: string;
   link: string;
   date: string;
@@ -15,6 +15,8 @@ export interface BlogPost {
   thumbnail: string | null;
   categories: number[];
   tags: number[];
+  pageViews?: number;
+  totalUsers?: number;
 }
 
 export interface InstagramPost {
@@ -33,7 +35,10 @@ export interface InstagramPost {
   shares: number;
 }
 
-const WP_BASE = "https://gohome-clinic.com/wp-json/wp/v2";
+// XServer WAFがGitHub Actionsの米国IPから/wp-json/を403で遮断するため、
+// 日本国内NAS（self-hosted runner）で日次同期されている共有スプレッドシート経由でblog一覧を取得する。
+const SPREADSHEET_ID = "1mPg_kiLfHtGBwnvE9DERfdZB_4cRYRuIGcySoTQQuVY";
+const BLOG_SHEET_NAME = "ブログ一覧";
 const GAS_URL =
   "https://script.google.com/macros/s/AKfycbzfTC0-0D9DB_odgG7OLkJ7cBI0vKaZdcaRAv3rx612t9pLSJR59gcsiUPCx7MSay-2/exec";
 
@@ -51,36 +56,56 @@ const FETCH_OPTS: RequestInit = {
 /**
  * 最新blog n件を取得（含アイキャッチ画像）
  */
-export async function fetchLatestBlogPosts(limit = 6): Promise<BlogPost[]> {
+/**
+ * GAS Web App から GA4 経由で blog 記事一覧を取得（PV/UU・公開日付き）
+ * gohome-clinic.com の /YYYY/MM/DD/ パターンURLが対象
+ */
+let _blogCache: BlogPost[] | null = null;
+async function fetchBlogFromGAS(): Promise<BlogPost[]> {
+  if (_blogCache) return _blogCache;
   try {
-    const url = `${WP_BASE}/posts?per_page=${limit}&_embed=wp:featuredmedia&_fields=id,title,link,date,excerpt,categories,tags,_links,_embedded&status=publish`;
+    const url = `${GAS_URL}?api=blog-ranking&days=180&limit=100`;
     const res = await fetch(url, FETCH_OPTS);
     if (!res.ok) {
-      const body = await res.text();
-      console.warn(
-        `[portal] blog fetch failed: status=${res.status} url=${url}\nbody[0..300]=${body.slice(0, 300)}`
-      );
+      console.warn(`[portal] blog GAS fetch failed: status=${res.status}`);
       return [];
     }
-    console.log(`[portal] blog fetch OK: status=${res.status}`);
-    const items: any[] = await res.json();
-    return items.map((p) => ({
-      id: p.id,
-      title: cleanHtml(p.title?.rendered ?? ""),
-      link: p.link,
-      date: p.date,
-      excerpt: cleanHtml(p.excerpt?.rendered ?? "").slice(0, 120),
-      thumbnail:
-        p._embedded?.["wp:featuredmedia"]?.[0]?.source_url ??
-        p._embedded?.["wp:featuredmedia"]?.[0]?.media_details?.sizes?.medium?.source_url ??
-        null,
-      categories: p.categories ?? [],
-      tags: p.tags ?? [],
-    }));
+    const text = await res.text();
+    if (text.startsWith("<!") || text.startsWith("<html")) {
+      console.warn("[portal] blog GAS returned HTML (deployment may require auth)");
+      return [];
+    }
+    const json = JSON.parse(text);
+    if (json.error) {
+      console.warn("[portal] blog GAS error:", json.error);
+      return [];
+    }
+    const data = json.data ?? [];
+    console.log(`[portal] blog from GAS OK: ${data.length} posts`);
+    _blogCache = data.map((p: any) => ({
+      id: p.url, // GA4ベースのため数値IDなし、URLをIDとして利用
+      title: String(p.title ?? ""),
+      link: String(p.url ?? ""),
+      date: String(p.date ?? ""),
+      excerpt: "",
+      thumbnail: null,
+      categories: [],
+      tags: [],
+      pageViews: Number(p.pageViews ?? 0),
+      totalUsers: Number(p.totalUsers ?? 0),
+    })) as BlogPost[];
+    return _blogCache;
   } catch (err) {
-    console.warn("[portal] blog fetch failed:", err);
+    console.warn("[portal] blog GAS fetch failed:", err);
     return [];
   }
+}
+
+export async function fetchLatestBlogPosts(limit = 6): Promise<BlogPost[]> {
+  const all = await fetchBlogFromGAS();
+  return [...all]
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+    .slice(0, limit);
 }
 
 /**
@@ -112,35 +137,13 @@ export async function fetchInstagramPosts(limit = 30): Promise<InstagramPost[]> 
 }
 
 /**
- * 人気blog（コメント数で代用 — 真の人気度はGA4等が必要）
+ * 人気blog — GA4 page views 降順
  */
 export async function fetchPopularBlogPosts(limit = 6): Promise<BlogPost[]> {
-  // _fields に comment_count を含めて取得、降順ソート
-  try {
-    const url = `${WP_BASE}/posts?per_page=50&_embed=wp:featuredmedia&_fields=id,title,link,date,excerpt,categories,tags,comment_count,_links,_embedded&status=publish&orderby=comment_count&order=desc`;
-    const res = await fetch(url, FETCH_OPTS);
-    if (!res.ok) return [];
-    const items: any[] = await res.json();
-    return items
-      .filter((p) => (p.comment_count ?? 0) > 0)
-      .slice(0, limit)
-      .map((p) => ({
-        id: p.id,
-        title: cleanHtml(p.title?.rendered ?? ""),
-        link: p.link,
-        date: p.date,
-        excerpt: cleanHtml(p.excerpt?.rendered ?? "").slice(0, 120),
-        thumbnail:
-          p._embedded?.["wp:featuredmedia"]?.[0]?.source_url ??
-          p._embedded?.["wp:featuredmedia"]?.[0]?.media_details?.sizes?.medium?.source_url ??
-          null,
-        categories: p.categories ?? [],
-        tags: p.tags ?? [],
-      }));
-  } catch (err) {
-    console.warn("[portal] popular blog fetch failed:", err);
-    return [];
-  }
+  const all = await fetchBlogFromGAS();
+  return [...all]
+    .sort((a: any, b: any) => (b.pageViews ?? 0) - (a.pageViews ?? 0))
+    .slice(0, limit);
 }
 
 /**
