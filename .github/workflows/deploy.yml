@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # 毎朝 07:00 JST に最新データで自動リビルド
+    # GAS側の Instagram データ日次更新（6:00 JST）後、blog_list_sync (6:00 JST) も完了済みのタイミング
+    - cron: '0 22 * * *'  # 22:00 UTC = 07:00 JST 翌日
   workflow_dispatch:
 
 permissions:
