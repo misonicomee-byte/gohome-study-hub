@@ -1,0 +1,88 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = "ごうホームクリニックが運営する、訪問診療の医療職向けWEB勉強会アーカイブです。" } = Astro.props;
+const siteName = "ごうホームクリニック WEB勉強会";
+const fullTitle = title === siteName ? title : `${title}｜${siteName}`;
+---
+
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="description" content={description} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <title>{fullTitle}</title>
+  </head>
+  <body class="min-h-screen bg-brand-50 text-brand-900 font-sans antialiased">
+    <header class="sticky top-0 z-50 backdrop-blur-md bg-white/80 border-b border-brand-100">
+      <nav class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <a href="/" class="flex items-center gap-3 group">
+          <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 grid place-items-center text-white font-bold shadow-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l9-9 9 9M5 10v10h14V10" />
+            </svg>
+          </div>
+          <div>
+            <div class="text-sm font-bold tracking-wide text-brand-700 leading-tight">ごうホームクリニック</div>
+            <div class="text-xs text-brand-500 leading-tight">WEB勉強会アーカイブ</div>
+          </div>
+        </a>
+        <div class="hidden md:flex items-center gap-6 text-sm font-medium">
+          <a href="/" class="nav-link text-brand-700 hover:text-brand-900">ホーム</a>
+          <a href="/#lectures" class="nav-link text-brand-700 hover:text-brand-900">全動画</a>
+          <a href="/#themes" class="nav-link text-brand-700 hover:text-brand-900">テーマ</a>
+          <a href="https://gohome-clinic.com" class="nav-link text-brand-700 hover:text-brand-900" target="_blank" rel="noopener">本院サイト</a>
+        </div>
+        <a
+          href="/line"
+          class="hidden md:inline-flex items-center gap-2 bg-[--color-line] text-white px-4 py-2 rounded-full text-sm font-semibold shadow-sm hover:shadow-md transition-shadow"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.508.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63.346 0 .628.285.628.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/></svg>
+          公式LINE登録
+        </a>
+      </nav>
+    </header>
+
+    <main>
+      <slot />
+    </main>
+
+    <footer class="mt-24 border-t border-brand-100 bg-white/60">
+      <div class="max-w-6xl mx-auto px-6 py-12 grid md:grid-cols-3 gap-8 text-sm text-brand-700">
+        <div>
+          <div class="font-bold text-brand-900 mb-2">ごうホームクリニック</div>
+          <p class="leading-relaxed">
+            名古屋市天白区を拠点に、名古屋市16区および日進市・東郷町・豊明市・刈谷市・知立市で訪問診療を行う在宅療養支援診療所です。
+          </p>
+        </div>
+        <div>
+          <div class="font-bold text-brand-900 mb-2">関連サイト</div>
+          <ul class="space-y-1.5">
+            <li><a href="https://gohome-clinic.com" target="_blank" rel="noopener" class="hover:text-brand-500">本院サイト</a></li>
+            <li><a href="https://gohome-clinic.com/blog/" target="_blank" rel="noopener" class="hover:text-brand-500">ブログ一覧</a></li>
+            <li><a href="/line" class="hover:text-brand-500">公式LINEのご案内</a></li>
+          </ul>
+        </div>
+        <div>
+          <div class="font-bold text-brand-900 mb-2">勉強会について</div>
+          <p class="leading-relaxed">
+            毎月開催のWEB勉強会は、訪問診療を学びたい医療職の方を対象にした、舞台裏トークも含むラーニングコンテンツです。
+          </p>
+        </div>
+      </div>
+      <div class="border-t border-brand-100 py-6 text-center text-xs text-brand-500">
+        © ごうホームクリニック WEB勉強会アーカイブ
+      </div>
+    </footer>
+  </body>
+</html>

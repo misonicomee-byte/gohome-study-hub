@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --color-brand-50:  #f0f7f4;
+  --color-brand-100: #d8ebde;
+  --color-brand-200: #b4d6c0;
+  --color-brand-300: #84b899;
+  --color-brand-400: #4f9871;
+  --color-brand-500: #2f7a55;
+  --color-brand-600: #1e6043;
+  --color-brand-700: #194c37;
+  --color-brand-800: #163d2e;
+  --color-brand-900: #122e23;
+  --color-accent-500: #d97706;  /* warm amber */
+  --color-line:    #06c755;     /* LINE official */
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+}
+
+body {
+  font-feature-settings: "palt";
+  letter-spacing: 0.02em;
+}
+
+/* Subtle card hover effect */
+.lecture-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.lecture-card:hover {
+  transform: translateY(-2px);
+}
+
+/* Hide hidden lectures when filter is active */
+[data-lecture][hidden] {
+  display: none;
+}
+
+/* Animated underline for nav */
+.nav-link {
+  position: relative;
+}
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0; bottom: -2px;
+  width: 100%;
+  height: 2px;
+  background: var(--color-brand-500);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.2s ease;
+}
+.nav-link:hover::after {
+  transform: scaleX(1);
+}

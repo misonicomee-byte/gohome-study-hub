@@ -1,0 +1,54 @@
+---
+import { formatDateLabel, type Lecture } from "../data/lectures";
+
+interface Props {
+  lecture: Lecture;
+}
+const { lecture } = Astro.props;
+const thumb = `https://i.ytimg.com/vi/${lecture.youtubeId}/maxresdefault.jpg`;
+const thumbFallback = `https://i.ytimg.com/vi/${lecture.youtubeId}/hqdefault.jpg`;
+---
+
+<article
+  class="lecture-card group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl border border-brand-100"
+  data-lecture
+  data-themes={lecture.themes.join(",")}
+>
+  <a href={`/lectures/${lecture.slug}/`} class="block">
+    <div class="relative aspect-video overflow-hidden bg-brand-100">
+      <img
+        src={thumb}
+        onerror={`this.src='${thumbFallback}'`}
+        alt={lecture.title}
+        loading="lazy"
+        class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+      />
+      <div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
+      <div class="absolute bottom-3 left-3 right-3 flex items-end justify-between">
+        <span class="bg-white/95 backdrop-blur text-brand-700 text-xs font-semibold px-2.5 py-1 rounded-full shadow-sm">
+          {formatDateLabel(lecture.date)}
+        </span>
+        <div class="w-12 h-12 rounded-full bg-white/95 backdrop-blur grid place-items-center shadow-md group-hover:scale-110 transition-transform">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-brand-700 translate-x-0.5" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7L8 5z" />
+          </svg>
+        </div>
+      </div>
+    </div>
+    <div class="p-5">
+      <h3 class="font-bold text-brand-900 leading-tight mb-2 group-hover:text-brand-600 transition-colors">
+        {lecture.title}
+      </h3>
+      <p class="text-sm text-brand-700/80 leading-relaxed line-clamp-3 mb-4">
+        {lecture.description}
+      </p>
+      <div class="flex flex-wrap gap-1.5">
+        {lecture.themes.map((t) => (
+          <span class="text-xs px-2 py-0.5 rounded-full bg-brand-50 text-brand-600 border border-brand-100">
+            #{t}
+          </span>
+        ))}
+      </div>
+    </div>
+  </a>
+</article>
