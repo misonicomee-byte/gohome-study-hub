@@ -16,6 +16,33 @@ export interface Lecture {
 
 export const LECTURES: Lecture[] = [
   {
+    slug: '2025-12-zaitaku-eiyo',
+    date: '2025-12',
+    title: '在宅患者の栄養管理 ― 暮らしに寄り添う在宅での栄養支援',
+    description:
+      '在宅医療における栄養支援の実際。フレイル予防から終末期の栄養管理まで、暮らしに寄り添う視点で多職種が解説。',
+    youtubeId: 'VIGKrci_oGg',
+    themes: ['栄養', '管理栄養士'],
+  },
+  {
+    slug: '2025-12-kariya-shukatsu',
+    date: '2025-12',
+    title: '【市民向け】刈谷市医師会「終活」講座 ― 人生の最期を自分ごととして考える',
+    description:
+      '刈谷市医師会主催の市民向け「終活」講座。人生の最期について自分ごととして考える機会を、医療者と市民で共有。',
+    youtubeId: 'ptubmRoqWNM',
+    themes: ['ACP', '看取り', '外部講演'],
+  },
+  {
+    slug: '2025-11-okane',
+    date: '2025-11',
+    title: '今こそ知っておきたいお金周りのこと ― 遺言・後見人・家族信託',
+    description:
+      '在宅医療を続けるうえで知っておきたいお金・法律の基礎知識。遺言、成年後見人、家族信託の使い分けを解説。',
+    youtubeId: 'aky2a7sX3mY',
+    themes: ['制度', '相続・後見'],
+  },
+  {
     slug: '2025-10-koreisha-fumin',
     date: '2025-10',
     title: '高齢者の不眠への対応',
@@ -82,6 +109,15 @@ export const LECTURES: Lecture[] = [
       'https://gohome-clinic.com/2025/05/05/%e8%a8%aa%e5%95%8f%e8%a8%ba%e7%99%82web%e5%8b%89%e5%bc%b7%e4%bc%9a%ef%bd%9c2025%e5%b9%b44%e6%9c%88%e3%81%aeyoutube%e6%8a%95%e7%a8%bf/',
   },
   {
+    slug: '2025-03-aichi-ninchisho-gh',
+    date: '2025-03',
+    title: '愛知県認知症グループホーム連絡協議会 西三河ブロック研修',
+    description:
+      '愛知県の認知症グループホーム連絡協議会 西三河ブロック研修。グループホームでの認知症ケアの実践を共有。',
+    youtubeId: 'wtjlL2AjjRQ',
+    themes: ['認知症', 'グループホーム', '外部講演'],
+  },
+  {
     slug: '2025-03-donyu-jirei',
     date: '2025-03',
     title: '訪問診療導入前後の実践事例',
@@ -91,6 +127,15 @@ export const LECTURES: Lecture[] = [
     themes: ['訪問診療導入', '実践事例'],
     blogUrl:
       'https://gohome-clinic.com/2025/03/27/%e8%a8%aa%e5%95%8f%e8%a8%ba%e7%99%82web%e5%8b%89%e5%bc%b7%e4%bc%9a%ef%bd%9c2025%e5%b9%b43%e6%9c%88%e3%81%aeyoutube%e6%8a%95%e7%a8%bf/',
+  },
+  {
+    slug: '2025-02-chiryu-nanbyo',
+    date: '2025-02',
+    title: '難病患者の生きる・支えるを再考する（知立市ネットワーク会議）',
+    description:
+      '知立市ネットワーク会議。難病患者の在宅生活を「生きる」「支える」の両側面から再考する地域ケア検討。',
+    youtubeId: 'Mq45XKnmUOY',
+    themes: ['神経難病', '外部講演'],
   },
   {
     slug: '2025-02-ryokin',
