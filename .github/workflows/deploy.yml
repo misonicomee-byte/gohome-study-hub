@@ -12,8 +12,8 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    runs-on: self-hosted  # NAS Runner（日本IP・XServer WAF回避のため）
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
