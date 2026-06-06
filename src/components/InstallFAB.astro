@@ -1,0 +1,194 @@
+---
+// Floating Install Button (PWA add-to-home-screen)
+// - Android Chrome: triggers native beforeinstallprompt
+// - iOS Safari: shows step-by-step instruction modal
+// - Already installed (standalone) / PC: hidden
+// - Dismissible (localStorage)
+---
+
+<button
+  id="install-fab"
+  type="button"
+  class="hidden fixed bottom-5 right-5 z-50 group items-center gap-2 bg-gradient-to-br from-emerald-500 to-emerald-700 hover:from-emerald-600 hover:to-emerald-800 text-white pl-4 pr-5 py-3 rounded-full shadow-xl hover:shadow-2xl transition-all"
+  aria-label="このサイトをホーム画面に追加"
+>
+  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+  </svg>
+  <span class="text-sm font-bold whitespace-nowrap">ホーム画面に追加</span>
+  <span
+    id="install-fab-close"
+    class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white text-emerald-700 grid place-items-center shadow-md border border-emerald-100"
+    aria-label="閉じる"
+    role="button"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  </span>
+</button>
+
+<!-- iOS Instructions Modal -->
+<div id="ios-install-modal" class="hidden fixed inset-0 z-[60] items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-6">
+  <div class="bg-white w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden">
+    <div class="bg-gradient-to-br from-emerald-500 to-emerald-700 px-6 py-5 text-white relative">
+      <button
+        id="ios-modal-close"
+        type="button"
+        class="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 grid place-items-center"
+        aria-label="閉じる"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+      <div class="text-2xl mb-1">📲</div>
+      <h2 class="text-lg font-bold">ホーム画面に追加</h2>
+      <p class="text-sm text-white/90 mt-1">アプリのように起動できます</p>
+    </div>
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex items-start gap-3">
+        <div class="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 font-bold text-sm grid place-items-center">1</div>
+        <div class="text-sm text-brand-800 leading-relaxed">
+          画面下部の<span class="inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded bg-sky-50 border border-sky-200 text-sky-700 font-semibold">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            共有
+          </span>ボタンをタップ
+        </div>
+      </div>
+      <div class="flex items-start gap-3">
+        <div class="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 font-bold text-sm grid place-items-center">2</div>
+        <div class="text-sm text-brand-800 leading-relaxed">
+          メニューを下にスクロールし、
+          <span class="inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            ホーム画面に追加
+          </span>
+          を選択
+        </div>
+      </div>
+      <div class="flex items-start gap-3">
+        <div class="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 font-bold text-sm grid place-items-center">3</div>
+        <div class="text-sm text-brand-800 leading-relaxed">
+          右上の<span class="mx-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 font-semibold">追加</span>をタップで完了
+        </div>
+      </div>
+    </div>
+    <div class="px-6 pb-5 pt-2 bg-brand-50 text-xs text-brand-700 leading-relaxed">
+      ※ <strong>Safari</strong> でご覧の場合のみホーム画面に追加できます。Chrome等の他のブラウザの場合は、まずSafariで開いてください。
+    </div>
+  </div>
+</div>
+
+<script is:inline>
+  (function () {
+    const FAB = document.getElementById("install-fab");
+    const CLOSE = document.getElementById("install-fab-close");
+    const MODAL = document.getElementById("ios-install-modal");
+    const MODAL_CLOSE = document.getElementById("ios-modal-close");
+    if (!FAB || !MODAL) return;
+
+    const STORAGE_KEY = "install-fab-dismissed-at";
+    const REAPPEAR_DAYS = 14;
+
+    function isStandalone() {
+      return (
+        window.matchMedia("(display-mode: standalone)").matches ||
+        window.navigator.standalone === true
+      );
+    }
+    function isIOS() {
+      return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    }
+    function isSafari() {
+      const ua = navigator.userAgent;
+      return /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+    }
+    function isMobile() {
+      return /Android|iPhone|iPad|iPod|Mobile/.test(navigator.userAgent);
+    }
+    function dismissedRecently() {
+      const ts = localStorage.getItem(STORAGE_KEY);
+      if (!ts) return false;
+      const diff = Date.now() - Number(ts);
+      return diff < REAPPEAR_DAYS * 24 * 60 * 60 * 1000;
+    }
+
+    // Hide if standalone (already installed), or PC, or recently dismissed
+    if (isStandalone() || !isMobile() || dismissedRecently()) return;
+
+    let deferredPrompt = null;
+
+    // Android Chrome
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      showFAB();
+    });
+
+    // iOS Safari — show after small delay
+    if (isIOS()) {
+      if (isSafari()) {
+        setTimeout(showFAB, 1500);
+      }
+      // Non-Safari iOS browsers can't install — don't show
+    }
+
+    function showFAB() {
+      FAB.classList.remove("hidden");
+      FAB.classList.add("inline-flex");
+    }
+    function hideFAB() {
+      FAB.classList.add("hidden");
+      FAB.classList.remove("inline-flex");
+    }
+    function showModal() {
+      MODAL.classList.remove("hidden");
+      MODAL.classList.add("flex");
+      document.body.style.overflow = "hidden";
+    }
+    function hideModal() {
+      MODAL.classList.add("hidden");
+      MODAL.classList.remove("flex");
+      document.body.style.overflow = "";
+    }
+
+    FAB.addEventListener("click", async (e) => {
+      // Close button is inside FAB — ignore main click when close was hit
+      if (e.target.closest("#install-fab-close")) return;
+
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        hideFAB();
+        if (choice.outcome === "dismissed") {
+          localStorage.setItem(STORAGE_KEY, String(Date.now()));
+        }
+      } else if (isIOS()) {
+        showModal();
+      }
+    });
+
+    CLOSE.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hideFAB();
+      localStorage.setItem(STORAGE_KEY, String(Date.now()));
+    });
+
+    MODAL_CLOSE.addEventListener("click", hideModal);
+    MODAL.addEventListener("click", (e) => {
+      if (e.target === MODAL) hideModal();
+    });
+
+    // Hide FAB after successful install
+    window.addEventListener("appinstalled", () => {
+      hideFAB();
+      localStorage.setItem(STORAGE_KEY, String(Date.now()));
+    });
+  })();
+</script>

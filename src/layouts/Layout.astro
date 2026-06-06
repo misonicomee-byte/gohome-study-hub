@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import InstallFAB from "../components/InstallFAB.astro";
 
 interface Props {
   title: string;
@@ -17,11 +18,24 @@ const fullTitle = title === siteName ? title : `${title}｜${siteName}`;
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#2f7a55" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="情報資料室" />
     <meta name="description" content={description} />
     <meta property="og:title" content={fullTitle} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <title>{fullTitle}</title>
+    <script is:inline>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/sw.js").catch(() => {});
+        });
+      }
+    </script>
   </head>
   <body class="min-h-screen bg-brand-50 text-brand-900 font-sans antialiased">
     <header class="sticky top-0 z-50 backdrop-blur-md bg-white/80 border-b border-brand-100">
@@ -146,6 +160,8 @@ const fullTitle = title === siteName ? title : `${title}｜${siteName}`;
     <main>
       <slot />
     </main>
+
+    <InstallFAB />
 
     <footer class="mt-24 border-t border-brand-100 bg-white/60">
       <div class="max-w-6xl mx-auto px-6 py-12 grid md:grid-cols-3 gap-8 text-sm text-brand-700">
