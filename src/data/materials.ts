@@ -50,7 +50,7 @@ export const MATERIALS: Material[] = [
   {
     slug: "satisfaction-survey-2025",
     title: "2025年 診療満足度調査まとめ",
-    description: "船井総研による2025年実施の診療満足度調査の結果まとめ。",
+    description: "2025年実施の診療満足度調査の結果まとめ。",
     filename: "satisfaction-survey-2025.pdf",
     category: "クリニック紹介",
     audience: "all",
@@ -58,7 +58,7 @@ export const MATERIALS: Material[] = [
   {
     slug: "satisfaction-survey-2024",
     title: "2024年 診療満足度調査まとめ",
-    description: "船井総研による2024年実施の診療満足度調査の結果まとめ。",
+    description: "2024年実施の診療満足度調査の結果まとめ。",
     filename: "satisfaction-survey-2024.pdf",
     category: "クリニック紹介",
     audience: "all",
