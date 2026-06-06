@@ -1,0 +1,63 @@
+---
+import { type InstagramPost, formatRelativeDate } from "../data/portal";
+
+interface Props {
+  post: InstagramPost;
+  rank?: number;
+  metric?: "likes" | "engagement";
+}
+const { post, rank, metric } = Astro.props;
+const caption = (post.caption || "").slice(0, 80);
+const engRate = post.reach > 0
+  ? ((post.like_count + post.comments_count + post.saved + post.shares) / post.reach * 100).toFixed(1)
+  : null;
+---
+
+<article class="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl border border-brand-100 relative">
+  {rank !== undefined && (
+    <div class="absolute top-3 left-3 z-10 w-9 h-9 rounded-full bg-gradient-to-br from-fuchsia-500 to-orange-400 text-white grid place-items-center font-bold shadow-lg">
+      {rank}
+    </div>
+  )}
+  <a href={post.permalink} target="_blank" rel="noopener" class="block">
+    <div class="relative aspect-square overflow-hidden bg-brand-100">
+      <img
+        src={post.thumbnail_url || post.media_url}
+        alt={caption}
+        loading="lazy"
+        class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+      />
+      {post.media_type === "VIDEO" && (
+        <div class="absolute top-2 right-2 bg-black/60 rounded-full w-7 h-7 grid place-items-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-white translate-x-0.5" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7L8 5z"/>
+          </svg>
+        </div>
+      )}
+      <div class="absolute bottom-2 left-2 flex gap-1.5 text-xs">
+        <span class="bg-black/60 text-white px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+          {post.like_count}
+        </span>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="flex items-center gap-2 text-xs text-brand-500 mb-2">
+        <span>{formatRelativeDate(post.timestamp)}</span>
+        <span>•</span>
+        <span class="text-pink-600 font-medium">Instagram</span>
+      </div>
+      <p class="text-sm text-brand-800 leading-relaxed line-clamp-2 mb-3">
+        {caption}{post.caption && post.caption.length > 80 ? "…" : ""}
+      </p>
+      <div class="flex flex-wrap gap-2 text-xs text-brand-600">
+        <span>💬 {post.comments_count}</span>
+        <span>📌 {post.saved}</span>
+        {post.reach > 0 && <span>👁 {post.reach.toLocaleString()}</span>}
+        {metric === "engagement" && engRate !== null && (
+          <span class="text-amber-600 font-bold">ER {engRate}%</span>
+        )}
+      </div>
+    </div>
+  </a>
+</article>

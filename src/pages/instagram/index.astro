@@ -1,0 +1,189 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import InstagramCard from "../../components/InstagramCard.astro";
+import { fetchInstagramPosts, rankByEngagementRate, rankByLikes, type InstagramPost } from "../../data/portal";
+
+const posts = await fetchInstagramPosts(50);
+const byLikes = rankByLikes(posts, 10);
+const byEngagement = rankByEngagementRate(posts, 10);
+const bySaved = [...posts].sort((a, b) => b.saved - a.saved).slice(0, 10);
+const byReach = [...posts].sort((a, b) => b.reach - a.reach).slice(0, 10);
+
+// 集計
+const totals = posts.reduce(
+  (acc, p) => {
+    acc.likes += p.like_count;
+    acc.comments += p.comments_count;
+    acc.saved += p.saved;
+    acc.reach += p.reach;
+    return acc;
+  },
+  { likes: 0, comments: 0, saved: 0, reach: 0 }
+);
+const n = posts.length;
+const avgLikes = n ? Math.round(totals.likes / n) : 0;
+const avgReach = n ? Math.round(totals.reach / n) : 0;
+const avgEngagement = totals.reach > 0
+  ? ((totals.likes + totals.comments + totals.saved) / totals.reach * 100).toFixed(2)
+  : "0";
+---
+
+<Layout title="Instagram分析" description="ごうホームクリニック公式 Instagram の投稿一覧と人気ランキング">
+  <!-- Hero -->
+  <section class="relative overflow-hidden bg-gradient-to-br from-pink-50 via-white to-purple-50">
+    <div class="max-w-6xl mx-auto px-6 py-12 md:py-16">
+      <div class="flex items-center gap-4 mb-4">
+        <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-fuchsia-500 via-pink-500 to-amber-400 grid place-items-center shadow-lg">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
+        </div>
+        <div>
+          <span class="text-xs font-bold tracking-widest text-pink-600 uppercase">Instagram Analytics</span>
+          <h1 class="text-3xl md:text-4xl font-bold text-brand-900 leading-tight">公式 Instagram 投稿分析</h1>
+        </div>
+      </div>
+      <p class="text-brand-700 leading-relaxed max-w-3xl">
+        ごうホームクリニック公式アカウント <a href="https://www.instagram.com/gohomeclinic" target="_blank" rel="noopener" class="text-pink-600 hover:text-pink-700 font-semibold">@gohomeclinic</a> の直近{n}投稿のパフォーマンスを集計しています。
+      </p>
+    </div>
+  </section>
+
+  {posts.length === 0 ? (
+    <section class="max-w-3xl mx-auto px-6 py-20">
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-8">
+        <h2 class="text-xl font-bold text-amber-900 mb-3">⚠️ データ未取得</h2>
+        <p class="text-amber-800 leading-relaxed mb-4">
+          Instagram データを取得できませんでした。GAS Web App の公開設定（Anyone access）が必要です。
+        </p>
+        <ol class="space-y-2 text-sm text-amber-900 list-decimal list-inside">
+          <li><a href="https://script.google.com/d/1CsRK5Z-9YTi07Y2S_qEwkkPHIVeVa7xC3AN1fZXx19z7kyi_rSf7M8JA/edit" target="_blank" class="text-amber-700 underline">GAS スクリプトを開く</a></li>
+          <li>右上「デプロイ」→「デプロイを管理」</li>
+          <li>v9 deployment の鉛筆アイコン → 「アクセスできるユーザー」を「全員」に変更</li>
+          <li>デプロイ → ビルド再実行</li>
+        </ol>
+      </div>
+    </section>
+  ) : (
+    <>
+    <!-- Stats Summary -->
+    <section class="max-w-6xl mx-auto px-6 py-10">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white rounded-2xl p-5 border border-brand-100 shadow-sm">
+          <div class="text-xs text-brand-500 mb-1">分析投稿数</div>
+          <div class="text-3xl font-bold text-brand-900">{n}</div>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-brand-100 shadow-sm">
+          <div class="text-xs text-brand-500 mb-1">平均いいね</div>
+          <div class="text-3xl font-bold text-brand-900">{avgLikes.toLocaleString()}</div>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-brand-100 shadow-sm">
+          <div class="text-xs text-brand-500 mb-1">平均リーチ</div>
+          <div class="text-3xl font-bold text-brand-900">{avgReach.toLocaleString()}</div>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-brand-100 shadow-sm">
+          <div class="text-xs text-brand-500 mb-1">平均エンゲージメント率</div>
+          <div class="text-3xl font-bold text-brand-900">{avgEngagement}%</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-3 gap-4 mt-4">
+        <div class="bg-white rounded-2xl p-5 border border-brand-100 shadow-sm text-center">
+          <div class="text-xs text-brand-500 mb-1">総いいね</div>
+          <div class="text-2xl font-bold text-pink-600">{totals.likes.toLocaleString()}</div>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-brand-100 shadow-sm text-center">
+          <div class="text-xs text-brand-500 mb-1">総コメント</div>
+          <div class="text-2xl font-bold text-brand-600">{totals.comments.toLocaleString()}</div>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-brand-100 shadow-sm text-center">
+          <div class="text-xs text-brand-500 mb-1">総保存</div>
+          <div class="text-2xl font-bold text-amber-600">{totals.saved.toLocaleString()}</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tabs Rankings -->
+    <section class="max-w-6xl mx-auto px-6 pb-16">
+      <div class="mb-6">
+        <h2 class="text-2xl md:text-3xl font-bold text-brand-900 mb-2">人気投稿ランキング TOP10</h2>
+        <p class="text-brand-700">指標を切り替えてランキングを見られます。</p>
+      </div>
+
+      <div class="flex flex-wrap gap-2 mb-6" id="rank-tabs">
+        <button type="button" data-rank-tab="engagement" class="px-4 py-2 rounded-full text-sm font-medium bg-pink-600 text-white shadow-sm">
+          エンゲージメント率
+        </button>
+        <button type="button" data-rank-tab="likes" class="px-4 py-2 rounded-full text-sm font-medium bg-white text-brand-700 border border-brand-200 hover:bg-brand-50">
+          いいね数
+        </button>
+        <button type="button" data-rank-tab="saved" class="px-4 py-2 rounded-full text-sm font-medium bg-white text-brand-700 border border-brand-200 hover:bg-brand-50">
+          保存数
+        </button>
+        <button type="button" data-rank-tab="reach" class="px-4 py-2 rounded-full text-sm font-medium bg-white text-brand-700 border border-brand-200 hover:bg-brand-50">
+          リーチ数
+        </button>
+      </div>
+
+      <div data-rank-panel="engagement" class="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+        {byEngagement.map((p, i) => <InstagramCard post={p} rank={i + 1} metric="engagement" />)}
+      </div>
+      <div data-rank-panel="likes" class="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4" hidden>
+        {byLikes.map((p, i) => <InstagramCard post={p} rank={i + 1} metric="likes" />)}
+      </div>
+      <div data-rank-panel="saved" class="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4" hidden>
+        {bySaved.map((p, i) => <InstagramCard post={p} rank={i + 1} />)}
+      </div>
+      <div data-rank-panel="reach" class="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4" hidden>
+        {byReach.map((p, i) => <InstagramCard post={p} rank={i + 1} />)}
+      </div>
+    </section>
+
+    <!-- All Posts -->
+    <section class="max-w-6xl mx-auto px-6 pb-20">
+      <h2 class="text-2xl md:text-3xl font-bold text-brand-900 mb-6">直近 {n} 投稿一覧</h2>
+      <div class="grid md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        {posts.map((p) => <InstagramCard post={p} />)}
+      </div>
+    </section>
+    </>
+  )}
+
+  <!-- Instagram CTA -->
+  <section class="max-w-6xl mx-auto px-6 pb-24">
+    <div class="bg-gradient-to-br from-fuchsia-500 via-pink-500 to-amber-400 rounded-3xl p-8 md:p-12 text-white shadow-xl">
+      <div class="md:flex items-center justify-between gap-8">
+        <div class="mb-6 md:mb-0">
+          <h2 class="text-2xl md:text-3xl font-bold mb-3">@gohomeclinic を Instagram でフォロー</h2>
+          <p class="text-white/90 leading-relaxed">
+            訪問診療の日常、スタッフの想い、地域の取り組みを発信中。
+          </p>
+        </div>
+        <a href="https://www.instagram.com/gohomeclinic" target="_blank" rel="noopener" class="inline-flex items-center gap-2 bg-white text-pink-700 px-6 py-3 rounded-full font-bold shadow-md hover:shadow-lg hover:scale-105 transition-all whitespace-nowrap">
+          Instagramを開く
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7-7 7M5 12h16" /></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    const tabs = document.querySelectorAll<HTMLButtonElement>("[data-rank-tab]");
+    const panels = document.querySelectorAll<HTMLElement>("[data-rank-panel]");
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const target = tab.dataset.rankTab;
+        tabs.forEach((t) => {
+          const active = t.dataset.rankTab === target;
+          t.classList.toggle("bg-pink-600", active);
+          t.classList.toggle("text-white", active);
+          t.classList.toggle("shadow-sm", active);
+          t.classList.toggle("bg-white", !active);
+          t.classList.toggle("text-brand-700", !active);
+          t.classList.toggle("border", !active);
+          t.classList.toggle("border-brand-200", !active);
+        });
+        panels.forEach((p) => {
+          p.toggleAttribute("hidden", p.dataset.rankPanel !== target);
+        });
+      });
+    });
+  </script>
+</Layout>
