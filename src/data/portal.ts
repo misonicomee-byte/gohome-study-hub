@@ -276,11 +276,19 @@ export function getPodcastGenres(eps: PodcastEpisode[]): { name: string; count: 
 }
 
 export function formatRelativeDate(iso: string): string {
-  const now = new Date();
-  const then = new Date(iso);
-  const diffMs = now.getTime() - then.getTime();
-  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  if (days === 0) return "今日";
+  const TZ = "Asia/Tokyo";
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const todayJst = new Date(`${fmt.format(new Date())}T00:00:00Z`);
+  const thenJst = new Date(`${fmt.format(new Date(iso))}T00:00:00Z`);
+  const days = Math.floor(
+    (todayJst.getTime() - thenJst.getTime()) / (1000 * 60 * 60 * 24),
+  );
+  if (days <= 0) return "今日";
   if (days === 1) return "昨日";
   if (days < 7) return `${days}日前`;
   if (days < 30) return `${Math.floor(days / 7)}週間前`;
