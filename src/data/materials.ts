@@ -133,14 +133,6 @@ export const MATERIALS: Material[] = [
     category: "連携先・連携方法",
     audience: "partner",
   },
-  {
-    slug: "contact-info",
-    title: "連絡方法",
-    description: "電話・FAX・LINE・メールなど、当院との連絡方法一覧。",
-    filename: "contact-info.pdf",
-    category: "連携先・連携方法",
-    audience: "all",
-  },
 ];
 
 export function getMaterialCategories(): string[] {
