@@ -276,6 +276,15 @@ export function getPodcastGenres(eps: PodcastEpisode[]): { name: string; count: 
 }
 
 export function formatRelativeDate(iso: string): string {
+  // Defensive: 不正な timestamp (Instagram APIの欠落値、yyyymmdd直書きの誤入力等) で
+  // ビルド全体がクラッシュしないように、まず Date が valid か検証する。
+  if (!iso || typeof iso !== "string") {
+    return "—";
+  }
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) {
+    return "—";
+  }
   const TZ = "Asia/Tokyo";
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
@@ -284,7 +293,7 @@ export function formatRelativeDate(iso: string): string {
     day: "2-digit",
   });
   const todayJst = new Date(`${fmt.format(new Date())}T00:00:00Z`);
-  const thenJst = new Date(`${fmt.format(new Date(iso))}T00:00:00Z`);
+  const thenJst = new Date(`${fmt.format(parsed)}T00:00:00Z`);
   const days = Math.floor(
     (todayJst.getTime() - thenJst.getTime()) / (1000 * 60 * 60 * 24),
   );
