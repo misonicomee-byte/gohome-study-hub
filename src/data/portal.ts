@@ -45,10 +45,9 @@ export interface InstagramPost {
   shares: number;
 }
 
-// XServer WAFがGitHub Actionsの米国IPから/wp-json/を403で遮断するため、
-// 日本国内NAS（self-hosted runner）で日次同期されている共有スプレッドシート経由でblog一覧を取得する。
-const SPREADSHEET_ID = "1mPg_kiLfHtGBwnvE9DERfdZB_4cRYRuIGcySoTQQuVY";
-const BLOG_SHEET_NAME = "ブログ一覧";
+// blog 一覧は GAS Web App (?api=blog-ranking) 経由で GA4 から取得する
+// （旧経路: XServer WAFがGitHub Actionsの米国IPを403で遮断するため、
+//  日本国内NAS 共有スプレッドシート → GAS の構成だったが、現在は GA4 ベース）。
 const GAS_URL =
   "https://script.google.com/macros/s/AKfycbzfTC0-0D9DB_odgG7OLkJ7cBI0vKaZdcaRAv3rx612t9pLSJR59gcsiUPCx7MSay-2/exec";
 
