@@ -320,27 +320,9 @@ const formatViews = (n: number) =>
     </section>
   )}
 
-  <!-- Themes Filter -->
-  <section id="themes" class="max-w-6xl mx-auto px-6 py-16">
-    <div class="mb-8">
-      <h2 class="text-2xl md:text-3xl font-bold text-brand-900 mb-2">テーマで探す</h2>
-      <p class="text-brand-700">気になるテーマを選ぶと、関連する資料だけが表示されます。</p>
-    </div>
-    <div class="flex flex-wrap gap-2" id="theme-buttons">
-      <button type="button" data-theme-filter="all" class="px-4 py-2 rounded-full text-sm font-medium bg-brand-600 text-white shadow-sm transition-colors">
-        すべて <span class="ml-1 opacity-75">({LECTURES.length})</span>
-      </button>
-      {themes.map((t) => (
-        <button type="button" data-theme-filter={t.name} class="px-4 py-2 rounded-full text-sm font-medium bg-white text-brand-700 border border-brand-200 hover:bg-brand-50 transition-colors">
-          {t.name} <span class="ml-1 opacity-60">({t.count})</span>
-        </button>
-      ))}
-    </div>
-  </section>
-
   <!-- 人気WEB勉強会ランキング（視聴回数順） -->
   {popularLectures.length > 0 && (
-    <section class="max-w-6xl mx-auto px-6 pb-8">
+    <section class="max-w-6xl mx-auto px-6 pt-12 pb-8">
       <div class="mb-6">
         <span class="text-xs font-bold tracking-wider text-amber-600 uppercase">Popular</span>
         <h2 class="text-2xl md:text-3xl font-bold text-brand-900 mt-1">人気WEB勉強会ランキング</h2>
@@ -402,6 +384,24 @@ const formatViews = (n: number) =>
       </ol>
     </section>
   )}
+
+  <!-- Themes Filter -->
+  <section id="themes" class="max-w-6xl mx-auto px-6 py-16">
+    <div class="mb-8">
+      <h2 class="text-2xl md:text-3xl font-bold text-brand-900 mb-2">テーマで探す</h2>
+      <p class="text-brand-700">気になるテーマを選ぶと、関連する資料だけが表示されます。</p>
+    </div>
+    <div class="flex flex-wrap gap-2" id="theme-buttons">
+      <button type="button" data-theme-filter="all" class="px-4 py-2 rounded-full text-sm font-medium bg-brand-600 text-white shadow-sm transition-colors">
+        すべて <span class="ml-1 opacity-75">({LECTURES.length})</span>
+      </button>
+      {themes.map((t) => (
+        <button type="button" data-theme-filter={t.name} class="px-4 py-2 rounded-full text-sm font-medium bg-white text-brand-700 border border-brand-200 hover:bg-brand-50 transition-colors">
+          {t.name} <span class="ml-1 opacity-60">({t.count})</span>
+        </button>
+      ))}
+    </div>
+  </section>
 
   <!-- Lecture Grid -->
   <section id="lectures" class="max-w-6xl mx-auto px-6 pb-24">
