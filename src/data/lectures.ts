@@ -12,11 +12,13 @@ export interface Lecture {
   youtubeId: string;
   themes: string[]; // タグ
   blogUrl?: string; // 関連ブログ記事URL
+  resumeUrl?: string; // レジュメ（Google Doc 公開リンク）
 }
 
 export const LECTURES: Lecture[] = [
   {
     slug: '2025-12-zaitaku-eiyo',
+    resumeUrl: 'https://docs.google.com/document/d/14w23njaa6ccWDkSD7ptWZZvzDutE4DGIJyuUbQQBZf8/preview',
     date: '2025-12',
     title: '在宅患者の栄養管理 ― 暮らしに寄り添う在宅での栄養支援',
     description:
@@ -26,6 +28,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-12-kariya-shukatsu',
+    resumeUrl: 'https://docs.google.com/document/d/1wTc66Zl317sOBYc_70n7ggoRYk8GEnIMyvDa-qtAwN4/preview',
     date: '2025-12',
     title: '【市民向け】刈谷市医師会「終活」講座 ― 人生の最期を自分ごととして考える',
     description:
@@ -35,6 +38,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-11-okane',
+    resumeUrl: 'https://docs.google.com/document/d/1JDa4F_s5WW7yKfiiNl7LEizw_NrTMY4Z7CLOsYGNCF4/preview',
     date: '2025-11',
     title: '今こそ知っておきたいお金周りのこと ― 遺言・後見人・家族信託',
     description:
@@ -44,6 +48,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-10-koreisha-fumin',
+    resumeUrl: 'https://docs.google.com/document/d/1TO_bqj59XhYMiklTbUJq7lKFw-i4xIkDz7AgSq7uJ0s/preview',
     date: '2025-10',
     title: '高齢者の不眠への対応',
     description:
@@ -55,6 +60,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-09-shinkei-nanbyo',
+    resumeUrl: 'https://docs.google.com/document/d/1FnrOnvw3RrEgyxKBm_hKKz0gDCGvoJZ9QjSO5xNABuM/preview',
     date: '2025-09',
     title: '神経難病と訪問診療 ― 家で生きる選択肢を支える',
     description:
@@ -66,6 +72,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-08-seishin-shikkan',
+    resumeUrl: 'https://docs.google.com/document/d/1W6s9s-IyvG8wPmTR4063BpwKRqpLFBR-IR2h_9mg1Vo/preview',
     date: '2025-08',
     title: '精神疾患を紐解く ― 精神科訪問診療の実際',
     description:
@@ -77,6 +84,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-07-ninchisho',
+    resumeUrl: 'https://docs.google.com/document/d/1sRvZQkBG5bMhHDOPKNgqmFa8rqxrBJZ4KludWwIvgy4/preview',
     date: '2025-07',
     title: '認知症とともに生きる在宅医療',
     description:
@@ -88,6 +96,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-05-acp',
+    resumeUrl: 'https://docs.google.com/document/d/1hZhYAWl9c9YPUP09U5LZTUplVQPc_kE79Y0hDYVTiY0/preview',
     date: '2025-05',
     title: 'ACP（人生会議）の学び直し',
     description:
@@ -99,6 +108,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-04-jokuso',
+    resumeUrl: 'https://docs.google.com/document/d/1ArlV0LO99aeVja-aTrUHkR5HBqu69JHSuqcnTnlcYJ4/preview',
     date: '2025-04',
     title: '在宅褥瘡処置 ― 皮膚科医レクチャー編',
     description:
@@ -110,6 +120,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-03-aichi-ninchisho-gh',
+    resumeUrl: 'https://docs.google.com/document/d/1JLDzqzVbbYkg8eGuTreAHuGnkH_BbhKrkBQSDtGF5SQ/preview',
     date: '2025-03',
     title: '愛知県認知症グループホーム連絡協議会 西三河ブロック研修',
     description:
@@ -119,6 +130,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-03-donyu-jirei',
+    resumeUrl: 'https://docs.google.com/document/d/1cg8Q679M5Lw_hAGpqgAjcSg9VD4CcyF01eTJvdfBVIc/preview',
     date: '2025-03',
     title: '訪問診療導入前後の実践事例',
     description:
@@ -130,6 +142,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-02-chiryu-nanbyo',
+    resumeUrl: 'https://docs.google.com/document/d/1B00vzeYmvC1cXgm56vE7eGYneOxui90xkgsgeEd9wtw/preview',
     date: '2025-02',
     title: '難病患者の生きる・支えるを再考する（知立市ネットワーク会議）',
     description:
@@ -139,6 +152,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-02-ryokin',
+    resumeUrl: 'https://docs.google.com/document/d/1bXU4SYpxvTsZrKJwqcYt1aQOOyBF7gCWj3h3RYSm_vk/preview',
     date: '2025-02',
     title: '訪問診療の料金と説明方法',
     description:
@@ -150,6 +164,7 @@ export const LECTURES: Lecture[] = [
   },
   {
     slug: '2025-01-itsukara',
+    resumeUrl: 'https://docs.google.com/document/d/1Csv6BfIUROpqzP-HgCv8pEdBsEcpeUt1CEu-x_TObbk/preview',
     date: '2025-01',
     title: 'いつから始める？訪問診療',
     description:

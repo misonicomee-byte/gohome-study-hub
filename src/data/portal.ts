@@ -274,6 +274,51 @@ export function getPodcastGenres(eps: PodcastEpisode[]): { name: string; count: 
     .sort((a, b) => b.count - a.count);
 }
 
+/**
+ * WEB勉強会動画の視聴回数を YouTube Data API v3 から取得（build時）
+ * APIキーは env: YOUTUBE_API_KEY。未設定・失敗時は空Mapを返す（ビルドは止めない）。
+ * 返り値: youtubeId -> viewCount のMap
+ */
+export async function fetchLectureViewCounts(
+  youtubeIds: string[],
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  const apiKey =
+    import.meta.env.YOUTUBE_API_KEY ?? process.env.YOUTUBE_API_KEY ?? "";
+  if (!apiKey) {
+    console.warn("[portal] YOUTUBE_API_KEY 未設定 — WEB勉強会ランキングをスキップ");
+    return result;
+  }
+  const ids = youtubeIds.filter(Boolean);
+  if (ids.length === 0) return result;
+  try {
+    // YouTube Data API は1リクエスト最大50件。現状は十分に収まる。
+    const url =
+      `https://www.googleapis.com/youtube/v3/videos` +
+      `?part=statistics&id=${ids.join(",")}&key=${apiKey}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`[portal] YouTube API fetch failed: status=${res.status}`);
+      return result;
+    }
+    const json = await res.json();
+    if (json.error) {
+      console.warn("[portal] YouTube API error:", json.error?.message ?? json.error);
+      return result;
+    }
+    for (const item of json.items ?? []) {
+      const id = String(item.id ?? "");
+      const views = Number(item.statistics?.viewCount ?? 0);
+      if (id) result.set(id, views);
+    }
+    console.log(`[portal] YouTube views OK: ${result.size} videos`);
+    return result;
+  } catch (err) {
+    console.warn("[portal] YouTube API fetch failed:", err);
+    return result;
+  }
+}
+
 export function formatRelativeDate(iso: string): string {
   // Defensive: 不正な timestamp (Instagram APIの欠落値、yyyymmdd直書きの誤入力等) で
   // ビルド全体がクラッシュしないように、まず Date が valid か検証する。

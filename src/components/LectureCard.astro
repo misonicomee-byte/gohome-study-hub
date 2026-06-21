@@ -10,7 +10,7 @@ const thumbFallback = `https://i.ytimg.com/vi/${lecture.youtubeId}/hqdefault.jpg
 ---
 
 <article
-  class="lecture-card group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl border border-brand-100"
+  class="lecture-card group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl border border-brand-100 flex flex-col"
   data-lecture
   data-themes={lecture.themes.join(",")}
 >
@@ -35,20 +35,40 @@ const thumbFallback = `https://i.ytimg.com/vi/${lecture.youtubeId}/hqdefault.jpg
         </div>
       </div>
     </div>
-    <div class="p-5">
+    <div class="px-5 pt-5">
       <h3 class="font-bold text-brand-900 leading-tight mb-2 group-hover:text-brand-600 transition-colors">
         {lecture.title}
       </h3>
-      <p class="text-sm text-brand-700/80 leading-relaxed line-clamp-3 mb-4">
+      <p class="text-sm text-brand-700/80 leading-relaxed line-clamp-3">
         {lecture.description}
       </p>
-      <div class="flex flex-wrap gap-1.5">
-        {lecture.themes.map((t) => (
-          <span class="text-xs px-2 py-0.5 rounded-full bg-brand-50 text-brand-600 border border-brand-100">
-            #{t}
-          </span>
-        ))}
-      </div>
     </div>
   </a>
+
+  <div class="px-5 pb-5 pt-4 mt-auto">
+    <div class="flex flex-wrap gap-1.5 mb-3">
+      {lecture.themes.map((t) => (
+        <span class="text-xs px-2 py-0.5 rounded-full bg-brand-50 text-brand-600 border border-brand-100">
+          #{t}
+        </span>
+      ))}
+    </div>
+    {lecture.resumeUrl && (
+      <a
+        href={lecture.resumeUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200 rounded-full px-3.5 py-1.5 transition-colors"
+        aria-label={`${lecture.title} のレジュメを開く`}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="8" y1="13" x2="16" y2="13" />
+          <line x1="8" y1="17" x2="16" y2="17" />
+        </svg>
+        レジュメを見る
+      </a>
+    )}
+  </div>
 </article>
