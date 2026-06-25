@@ -10,6 +10,10 @@ interface Props {
 const { title, description = "ごうホームクリニックが運営する、訪問診療を学ぶ医療職向けの情報資料室です。WEB勉強会動画・関連資料を集約しています。" } = Astro.props;
 const siteName = "ごうホームクリニック 訪問診療情報資料室";
 const fullTitle = title === siteName ? title : `${title}｜${siteName}`;
+
+// Cloudflare Web Analytics beacon token (build-time env; safe to expose in HTML).
+// Renders only when CF_BEACON_TOKEN is set so local/preview builds stay clean.
+const cfBeaconToken = import.meta.env.CF_BEACON_TOKEN;
 ---
 
 <!doctype html>
@@ -193,5 +197,16 @@ const fullTitle = title === siteName ? title : `${title}｜${siteName}`;
         © ごうホームクリニック 訪問診療情報資料室
       </div>
     </footer>
+
+    {
+      cfBeaconToken && (
+        <script
+          is:inline
+          defer
+          src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon={`{"token": "${cfBeaconToken}"}`}
+        />
+      )
+    }
   </body>
 </html>

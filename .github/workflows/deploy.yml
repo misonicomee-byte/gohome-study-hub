@@ -35,6 +35,7 @@ jobs:
         run: npm run build
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          CF_BEACON_TOKEN: ${{ secrets.CF_BEACON_TOKEN }}
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
