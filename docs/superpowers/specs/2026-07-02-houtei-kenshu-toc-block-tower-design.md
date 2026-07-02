@@ -1,4 +1,26 @@
-# Houtei Kenshu TOC Block-Tower Design (v2)
+# Houtei Kenshu TOC Block-Tower Design
+
+## v7: Three.js WebGL scene (current)
+
+`src/scripts/houteiTowerScene.mjs` renders the hero object in real 3D when
+WebGL is available (`.training-toc-tower.is-gl` hides the SVG fallback):
+
+- Hex column of five CylinderGeometry(6-seg) segments — wood-grain and
+  terrazzo CanvasTextures, walnut, yellow, pink-capped crown — flat-shaded
+  MeshStandardMaterial, ACES tone mapping, PCF shadows on a ShadowMaterial
+  floor disc, transparent canvas over the mist stage.
+- Five RoundedBox cubes (mint / terrazzo / yellow / magenta / wood) run the
+  24s formation cycle: docked ring → exploded halo with wobble → tumbling
+  (full 2π around per-cube axes) criss-cross flight → pyramid stacked on the
+  crown → staggered cascade home. The whole object slowly rotates (48s/turn)
+  while column beats (crown lift, segment drawer slides) fire between phases.
+- Lifecycle: IntersectionObserver + visibilitychange pause the RAF loop;
+  pixel ratio clamped to 2; prefers-reduced-motion and WebGL failure keep
+  the SVG tower (below) instead. Bundle cost ≈130KB gzip, portal page only.
+
+---
+
+# (SVG fallback) v2 history
 
 ## Problem
 

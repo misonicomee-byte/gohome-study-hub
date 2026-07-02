@@ -976,6 +976,20 @@ const TOWER_LOOP_CLASS = {
     })();
   </script>
 
+  <script>
+    import { initTowerScene } from "../../scripts/houteiTowerScene.mjs";
+
+    const host = document.querySelector(".training-toc-tower");
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (host instanceof HTMLElement && !reducedMotion && host.clientWidth > 0) {
+      try {
+        initTowerScene(host);
+      } catch {
+        // WebGL unavailable — the inline SVG tower stays visible.
+      }
+    }
+  </script>
+
   <style is:global>
     .training-toc-stage {
       --color-canvas-mist: #e5e7eb;
@@ -1015,6 +1029,22 @@ const TOWER_LOOP_CLASS = {
       width: 158px;
       height: auto;
       overflow: visible;
+    }
+
+    .training-toc-tower.is-gl svg {
+      display: none;
+    }
+
+    .training-toc-tower .toc-tower-canvas {
+      display: block;
+      opacity: 0;
+      animation: toc-canvas-in 600ms ease-out 120ms forwards;
+    }
+
+    @keyframes toc-canvas-in {
+      to {
+        opacity: 1;
+      }
     }
 
     .toc-tower-block {
