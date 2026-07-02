@@ -14,15 +14,17 @@ const TOWER_FACES = {
   white: "--ft: #ffffff; --fl: #e9ebee; --fr: #d4d7db;",
   magenta: "--ft: #ff4fa3; --fl: #e02f86; --fr: #b8236c;",
 };
+// Every cube hovers forever; amplitudes are in local units, so scaled-down
+// floaters need larger values to stay visibly moving on screen.
 const tocTowerCubes = [
-  { tone: "mint", x: 92, y: 77, scale: 1, drop: 0.15 },
-  { tone: "yellow", x: 114, y: 85, scale: 1, drop: 0.3 },
-  { tone: "white", x: 80, y: 95, scale: 0.6, drop: 0.45 },
-  { tone: "magenta", x: 128, y: 52, scale: 0.55, drop: 0.6, float: 4.6 },
-  { tone: "yellow", x: 74, y: 40, scale: 0.5, drop: 0.75, float: 3.8 },
+  { tone: "mint", x: 92, y: 77, scale: 1, drop: 0.15, float: 5.6, amp: -4 },
+  { tone: "yellow", x: 114, y: 85, scale: 1, drop: 0.3, float: 4.8, amp: -5 },
+  { tone: "white", x: 80, y: 95, scale: 0.6, drop: 0.45, float: 5.2, amp: -6, floater: false },
+  { tone: "magenta", x: 128, y: 52, scale: 0.55, drop: 0.6, float: 4.2, amp: -18, floater: true },
+  { tone: "yellow", x: 74, y: 40, scale: 0.5, drop: 0.75, float: 3.6, amp: -20, floater: true },
 ].map((cube) => ({
   ...cube,
-  style: `${TOWER_FACES[cube.tone]} --drop-delay: ${cube.drop}s;${cube.float ? ` --float-duration: ${cube.float}s;` : ""}`,
+  style: `${TOWER_FACES[cube.tone]} --drop-delay: ${cube.drop}s; --float-duration: ${cube.float}s; --float-amp: ${cube.amp}px;`,
 }));
 ---
 
@@ -95,7 +97,7 @@ const tocTowerCubes = [
               </g>
             </defs>
             <g transform="translate(100, 100)">
-              <g class="toc-tower-block toc-tower-base" style="--drop-delay: 0s;">
+              <g class="toc-tower-block toc-tower-base" style="--drop-delay: 0s; --float-amp: 0px;">
                 <polygon points="30,0 15,13 -15,13 -30,0 -15,-13 15,-13" fill="#eef0f2" />
                 <polygon points="-15,13 -30,0 -30,64 -15,77" fill="#d8dbdf" />
                 <polygon points="15,13 -15,13 -15,77 15,77" fill="#c6cacf" />
@@ -106,7 +108,7 @@ const tocTowerCubes = [
               <g transform={`translate(${cube.x}, ${cube.y})${cube.scale !== 1 ? ` scale(${cube.scale})` : ""}`}>
                 <use
                   href="#toc-iso-block"
-                  class={`toc-tower-block${cube.float ? " toc-tower-floater" : ""}`}
+                  class={`toc-tower-block${cube.floater ? " toc-tower-floater" : ""}`}
                   style={cube.style}
                 />
               </g>
@@ -912,15 +914,10 @@ const tocTowerCubes = [
     }
 
     .toc-tower-block {
-      animation: toc-tower-drop 0.8s cubic-bezier(0.3, 1.4, 0.5, 1) both;
-      animation-delay: var(--drop-delay, 0s);
-      will-change: transform, opacity;
-    }
-
-    .toc-tower-floater {
       animation:
-        toc-tower-drop 0.8s cubic-bezier(0.3, 1.4, 0.5, 1) both,
-        toc-tower-float var(--float-duration, 4s) ease-in-out calc(var(--drop-delay, 0s) + 1.4s) infinite alternate;
+        toc-tower-drop 0.8s cubic-bezier(0.3, 1.4, 0.5, 1) var(--drop-delay, 0s) both,
+        toc-tower-float var(--float-duration, 5s) ease-in-out calc(var(--drop-delay, 0s) + 0.8s) infinite alternate;
+      will-change: transform, opacity;
     }
 
     .training-toc-kicker {
@@ -1195,7 +1192,7 @@ const tocTowerCubes = [
       }
 
       to {
-        transform: translateY(-6px);
+        transform: translateY(var(--float-amp, -4px));
       }
     }
 
