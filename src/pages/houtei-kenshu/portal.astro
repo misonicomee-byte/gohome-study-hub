@@ -1,0 +1,1665 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { PASSING_SCORE, QUIZ_DISPLAY_COUNT, trainingModules } from "../../data/houteiKenshu.mjs";
+
+const rosterRows = Array.from({ length: 12 }, (_, index) => index + 1);
+
+// Blueprint-grid background: every part snaps to the 48px grid that the
+// stage already draws, and moves only along the grid axes (no rotation).
+const GRID_UNIT = 48;
+const gridPx = (cells) => `${cells * GRID_UNIT}px`;
+
+// Soft grid-cell pulses lighting up in a diagonal wave (delay follows col+row).
+const tocGridPulses = [
+  { tone: "mint", col: 1, row: 5, size: 2 },
+  { tone: "yellow", col: 6, row: 7, size: 1 },
+  { tone: "mint", col: 3, row: 15, size: 2 },
+  { tone: "yellow", col: 1, row: 19, size: 1 },
+  { tone: "mint", col: 8, row: 10, size: 1 },
+  { tone: "yellow", col: 9, row: 13, size: 2 },
+  { tone: "mint", col: 12, row: 6, size: 1 },
+  { tone: "yellow", col: 13, row: 17, size: 1 },
+  { tone: "mint", col: 15, row: 9, size: 2 },
+  { tone: "yellow", col: 17, row: 2, size: 1 },
+  { tone: "mint", col: 19, row: 14, size: 1 },
+  { tone: "yellow", col: 21, row: 5, size: 2 },
+  { tone: "mint", col: 21, row: 19, size: 1 },
+  { tone: "yellow", col: 11, row: 20, size: 1 },
+].map((part) => ({
+  ...part,
+  style: `--x: ${gridPx(part.col)}; --y: ${gridPx(part.row)}; --s: ${gridPx(part.size)}; --delay: ${(-(part.col + part.row) * 0.4).toFixed(1)}s; --duration: 9.6s;`,
+}));
+
+// Registration "+" marks at grid intersections.
+const tocGridMarks = [
+  { col: 6, row: 3 },
+  { col: 14, row: 6 },
+  { col: 2, row: 12 },
+  { col: 18, row: 11 },
+  { col: 10, row: 18 },
+  { col: 22, row: 16 },
+].map((mark, index) => ({
+  ...mark,
+  style: `--x: ${gridPx(mark.col)}; --y: ${gridPx(mark.row)}; --delay: ${(-index * 1.3).toFixed(1)}s;`,
+}));
+
+// Hairline rules that draw themselves along grid rows.
+const tocGridRules = [
+  { col: 1, row: 7, span: 6, delay: -2, duration: 12 },
+  { col: 14, row: 3, span: 7, delay: -7, duration: 14 },
+  { col: 8, row: 20, span: 9, delay: -11, duration: 13 },
+].map((rule) => ({
+  ...rule,
+  style: `--x: ${gridPx(rule.col)}; --y: ${gridPx(rule.row)}; --w: ${gridPx(rule.span)}; --delay: ${rule.delay}s; --duration: ${rule.duration}s;`,
+}));
+
+// Dots travelling along grid lines, one axis at a time.
+const tocGridDots = [
+  { col: 2, row: 10, travelCols: 8, travelRows: 0, delay: -1, duration: 8 },
+  { col: 16, row: 2, travelCols: 0, travelRows: 9, delay: -4, duration: 9 },
+  { col: 11, row: 16, travelCols: 7, travelRows: 0, delay: -6, duration: 8.5 },
+].map((dot) => ({
+  ...dot,
+  style: `--x: ${gridPx(dot.col)}; --y: ${gridPx(dot.row)}; --travel-x: ${gridPx(dot.travelCols)}; --travel-y: ${gridPx(dot.travelRows)}; --delay: ${dot.delay}s; --duration: ${dot.duration}s;`,
+}));
+---
+
+<Layout
+  title="法定研修ポータル"
+  description="LINEログインで本人確認済みの方向けの法定研修ポータルです。研修動画、小テスト、講義別の受講証明書を確認できます。"
+>
+  <section class="max-w-6xl mx-auto px-6 py-10 md:py-14 no-print">
+    <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <div>
+        <span class="text-xs font-bold tracking-wider text-brand-600 uppercase">Training Portal</span>
+        <h1 class="mt-2 text-3xl md:text-4xl font-bold text-brand-900">ケアマネ向け法定研修</h1>
+        <p class="mt-3 max-w-3xl text-brand-700 leading-relaxed">
+          講義ごとに動画視聴、小テスト、修了書発行を行えます。小テストは10問の中から毎回5問をランダム表示し、全問正解でその講義の修了書を発行できます。
+        </p>
+      </div>
+      <a
+        href="/api/auth/line/logout"
+        class="inline-flex items-center justify-center rounded-full border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 transition-colors"
+      >
+        ログアウト
+      </a>
+    </div>
+
+    <div class="mt-8 rounded-xl border border-brand-100 bg-white p-5 shadow-sm">
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-end">
+        <div class="flex-1">
+          <h2 class="text-lg font-bold text-brand-900">受講者情報</h2>
+          <p class="mt-1 text-sm text-brand-600">修了書に転記されます。未入力のままでも修了書を発行できます。</p>
+        </div>
+        <form id="learner-form" class="grid flex-[2] gap-3 md:grid-cols-2">
+          <label class="grid gap-1 text-sm font-bold text-brand-800">
+            受講者名
+            <input
+              id="learner-name"
+              name="name"
+              autocomplete="name"
+              class="rounded-lg border border-brand-200 px-3 py-2 font-normal text-brand-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              placeholder="山田 太郎"
+            />
+          </label>
+          <label class="grid gap-1 text-sm font-bold text-brand-800">
+            所属
+            <input
+              id="learner-organization"
+              name="organization"
+              autocomplete="organization"
+              class="rounded-lg border border-brand-200 px-3 py-2 font-normal text-brand-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              placeholder="居宅介護支援事業所名"
+            />
+          </label>
+        </form>
+      </div>
+    </div>
+
+    <nav class="training-toc-stage mt-8" aria-label="研修目次">
+      <span class="training-toc-build-layer" aria-hidden="true">
+        {tocGridPulses.map((part) => (
+          <span
+            class="training-toc-build-part"
+            data-tone={part.tone}
+            style={part.style}
+          ></span>
+        ))}
+        {tocGridRules.map((rule) => (
+          <span class="training-toc-grid-rule" style={rule.style}></span>
+        ))}
+        {tocGridMarks.map((mark) => (
+          <span class="training-toc-grid-mark" style={mark.style}></span>
+        ))}
+        {tocGridDots.map((dot) => (
+          <span class="training-toc-grid-dot" style={dot.style}></span>
+        ))}
+        <span class="training-toc-grid-beam"></span>
+      </span>
+      <div class="training-toc-header">
+        <div class="training-toc-heading">
+          <span class="training-toc-kicker">Training Map</span>
+          <h2>研修を選ぶ</h2>
+          <p>必要な講義へ移動し、講義ごとに小テストと修了書を進められます。</p>
+        </div>
+        <div class="training-toc-rule" aria-label={`合格基準 ${PASSING_SCORE}%`}>
+          <span>合格基準</span>
+          <strong>{PASSING_SCORE}%</strong>
+          <small>表示5問すべて正解</small>
+        </div>
+      </div>
+      <ol class="training-toc-grid">
+        {trainingModules.map((item) => (
+          <li>
+            <a
+              href={`#module-${item.id}`}
+              data-toc-card
+              data-module-id={item.id}
+              data-status-tone="pending"
+              class="training-toc-card"
+            >
+              <span class="training-toc-card__accent" aria-hidden="true"></span>
+              <span class="training-toc-card__main">
+                <span class="training-toc-number">{item.displayNumber}</span>
+                <span class="training-toc-copy">
+                  <span class="training-toc-title">{item.title}</span>
+                  <span class="training-toc-meta">
+                    <span>{item.category}</span>
+                    <span>{item.duration}</span>
+                  </span>
+                </span>
+              </span>
+              <span class="training-toc-card__side">
+                <span
+                  data-toc-status
+                  data-module-id={item.id}
+                  class="training-toc-status shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600"
+                >
+                  未受講
+                </span>
+                <span class="training-toc-arrow" aria-hidden="true">→</span>
+              </span>
+            </a>
+          </li>
+        ))}
+      </ol>
+    </nav>
+  </section>
+
+  <section class="max-w-6xl mx-auto px-6 pb-12 no-print">
+    <div class="grid gap-8">
+      {trainingModules.map((item) => (
+        <article
+          id={`module-${item.id}`}
+          data-module-card
+          data-module-id={item.id}
+          class="scroll-mt-6 rounded-xl border border-brand-100 bg-white p-5 md:p-6 shadow-sm"
+        >
+          <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div class="flex flex-wrap items-center gap-3">
+                <span class="inline-flex min-w-12 justify-center rounded-full bg-brand-50 px-3 py-1 text-sm font-bold text-brand-700 ring-1 ring-brand-100">
+                  {item.displayNumber}
+                </span>
+                <span class="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-100">
+                  {item.category}
+                </span>
+                <span class="text-sm font-semibold text-brand-500">{item.duration}</span>
+              </div>
+              <h2 class="mt-3 text-2xl font-bold text-brand-900">{item.title}</h2>
+              <p class="mt-2 text-sm text-brand-600">この講義は単独で小テストと修了書発行ができます。</p>
+            </div>
+            <span
+              data-module-status
+              data-module-id={item.id}
+              class="self-start rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"
+            >
+              未受講
+            </span>
+          </div>
+
+          <div class="mt-5 overflow-hidden rounded-lg border border-brand-100 bg-black">
+            <video
+              controls
+              playsinline
+              preload="metadata"
+              data-module-video
+              data-module-id={item.id}
+              src={`/api/houtei-kenshu/video/${item.slug}`}
+              class="aspect-video w-full bg-black"
+            >
+              動画を再生できません。ブラウザを更新して再度お試しください。
+            </video>
+          </div>
+
+          <section class="mt-5 rounded-lg border border-brand-100 bg-brand-50 p-4 md:p-5">
+            <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 class="text-lg font-bold text-brand-900">小テスト</h3>
+                <p class="mt-1 text-sm text-brand-600">10問の中からランダムに5問表示しています。全問正解が必要です。</p>
+              </div>
+              <span
+                data-quiz-summary
+                data-module-id={item.id}
+                class="self-start rounded-full bg-white px-3 py-1 text-xs font-bold text-brand-600 ring-1 ring-brand-100"
+              >
+                未採点
+              </span>
+            </div>
+
+            <div
+              data-quiz-host
+              data-module-id={item.id}
+              class="mt-4 grid gap-4"
+              aria-live="polite"
+            ></div>
+
+            <p
+              data-quiz-result
+              data-module-id={item.id}
+              class="mt-4 min-h-5 text-sm font-bold"
+              aria-live="polite"
+            ></p>
+
+            <div class="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                data-grade-quiz
+                data-module-id={item.id}
+                class="rounded-full bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
+              >
+                採点する
+              </button>
+              <button
+                type="button"
+                data-complete-module
+                data-module-id={item.id}
+                class="rounded-full border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-50"
+              >
+                受講完了にする
+              </button>
+              <button
+                type="button"
+                data-create-certificate
+                data-module-id={item.id}
+                class="rounded-full border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-50"
+              >
+                修了書を作成
+              </button>
+            </div>
+          </section>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section id="certificate-panel" class="max-w-6xl mx-auto px-6 pb-16 no-print">
+    <div class="rounded-xl border border-brand-100 bg-white p-5 md:p-6 shadow-sm">
+      <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <span class="text-xs font-bold tracking-wider text-brand-600 uppercase">Certificate</span>
+          <h2 class="mt-2 text-2xl md:text-3xl font-bold text-brand-900">講義別 修了書・受講者名簿</h2>
+          <p id="certificate-panel-message" class="mt-3 text-brand-700 leading-relaxed">
+            各講義の小テストに全問正解し、受講完了後に修了書と受講者名簿を作成できます。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="certificate-preview" class="certificate-print mx-auto mb-16 hidden max-w-5xl px-6 py-8 md:px-10 md:py-10">
+    <div class="no-print mb-4 flex flex-wrap justify-end gap-3">
+      <button
+        id="certificate-preview-print"
+        type="button"
+        class="rounded-full bg-brand-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
+      >
+        印刷
+      </button>
+      <button
+        id="certificate-preview-pdf"
+        type="button"
+        class="rounded-full border border-brand-200 bg-white px-5 py-2 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-50"
+      >
+        PDF保存
+      </button>
+    </div>
+    <div class="certificate-sheet border-4 border-brand-700 bg-white p-8 md:p-12 text-center">
+      <div class="text-sm font-bold tracking-[0.35em] text-brand-600">CERTIFICATE</div>
+      <h2 class="mt-4 text-3xl md:text-5xl font-bold text-brand-900">修了証</h2>
+      <p class="mt-8 text-lg text-brand-700">
+        以下の者は、下記の研修を受講し、小テストに全問正解したことを証明します。
+      </p>
+
+      <div class="mt-10 grid gap-4 text-left text-brand-900">
+        <div class="grid grid-cols-[6rem_1fr] border-b border-brand-200 pb-3">
+          <span class="font-bold text-brand-600">受講者</span>
+          <span id="certificate-preview-name" class="font-bold"></span>
+        </div>
+        <div class="grid grid-cols-[6rem_1fr] border-b border-brand-200 pb-3">
+          <span class="font-bold text-brand-600">所属</span>
+          <span id="certificate-preview-organization"></span>
+        </div>
+        <div class="grid grid-cols-[6rem_1fr] border-b border-brand-200 pb-3">
+          <span class="font-bold text-brand-600">研修名</span>
+          <span id="certificate-preview-module" class="font-bold"></span>
+        </div>
+        <div class="grid grid-cols-[6rem_1fr] border-b border-brand-200 pb-3">
+          <span class="font-bold text-brand-600">受講日</span>
+          <span id="certificate-preview-date"></span>
+        </div>
+      </div>
+
+      <div class="mt-10 flex flex-col items-center gap-2 text-brand-900">
+        <div id="certificate-preview-issuer" class="text-lg font-bold">ごうホームクリニック 訪問診療情報資料室</div>
+        <div id="certificate-preview-serial" class="text-xs text-brand-500"></div>
+      </div>
+    </div>
+
+    <section id="certificate-roster" class="certificate-roster mt-8 border-4 border-brand-700 bg-white p-8 md:p-12 text-brand-900">
+      <div class="text-center">
+        <div class="text-sm font-bold tracking-[0.35em] text-brand-600">ATTENDANCE ROSTER</div>
+        <h2 class="mt-4 text-3xl md:text-4xl font-bold">受講者名簿</h2>
+        <p class="mt-4 text-sm text-brand-600">
+          サーバーには保存されません。印刷またはPDF保存後、各自で記入してください。
+        </p>
+      </div>
+
+      <div class="mt-8 grid gap-3 text-sm md:grid-cols-3">
+        <div class="border-b border-brand-300 pb-2">
+          <span class="font-bold text-brand-600">研修名</span>
+          <div id="certificate-roster-module" class="mt-1 min-h-6 font-semibold"></div>
+        </div>
+        <div class="border-b border-brand-300 pb-2">
+          <span class="font-bold text-brand-600">実施日</span>
+          <div id="certificate-roster-date" class="mt-1 min-h-6"></div>
+        </div>
+        <div class="border-b border-brand-300 pb-2">
+          <span class="font-bold text-brand-600">事業所名</span>
+          <div id="certificate-roster-organization" class="mt-1 min-h-6"></div>
+        </div>
+      </div>
+
+      <div class="mt-8 overflow-hidden border border-brand-700">
+        <table class="w-full border-collapse text-left text-sm">
+          <thead class="bg-brand-50 text-brand-800">
+            <tr>
+              <th class="w-12 border border-brand-700 px-2 py-3 text-center">No.</th>
+              <th class="border border-brand-700 px-3 py-3">受講者名</th>
+              <th class="border border-brand-700 px-3 py-3">所属</th>
+              <th class="w-32 border border-brand-700 px-3 py-3">受講日</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rosterRows.map((row) => (
+              <tr>
+                <td class="border border-brand-700 px-2 py-4 text-center font-semibold">{row}</td>
+                <td class="border border-brand-700 px-3 py-4"></td>
+                <td class="border border-brand-700 px-3 py-4"></td>
+                <td class="border border-brand-700 px-3 py-4"></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+
+  <div
+    id="portal-toast"
+    class="fixed bottom-5 left-1/2 z-50 hidden max-w-[min(92vw,40rem)] -translate-x-1/2 rounded-lg px-4 py-3 text-sm font-bold shadow-lg no-print"
+    role="status"
+    aria-live="polite"
+  ></div>
+
+  <script is:inline define:vars={{ trainingModules, quizDisplayCount: QUIZ_DISPLAY_COUNT, passingScore: PASSING_SCORE }}>
+    (function () {
+      const STORAGE_KEY = "gohome:houtei-kenshu:v2";
+      const modules = Array.isArray(trainingModules) ? trainingModules : [];
+      const selectedQuizzes = Object.fromEntries(
+        modules.map((module) => [module.id, selectQuizzes(module)]),
+      );
+
+      function loadState() {
+        try {
+          const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+          return normalizeState(parsed);
+        } catch {
+          return normalizeState({});
+        }
+      }
+
+      function normalizeState(parsed) {
+        return {
+          learner: parsed.learner && typeof parsed.learner === "object" ? parsed.learner : {},
+          completed: parsed.completed && typeof parsed.completed === "object" ? parsed.completed : {},
+          answers: parsed.answers && typeof parsed.answers === "object" ? parsed.answers : {},
+          results: {},
+          certificates: parsed.certificates && typeof parsed.certificates === "object" ? parsed.certificates : {},
+          activeCertificateModuleId: typeof parsed.activeCertificateModuleId === "string" ? parsed.activeCertificateModuleId : null,
+        };
+      }
+
+      let state = loadState();
+
+      function saveState() {
+        const persisted = {
+          learner: state.learner,
+          completed: state.completed,
+          answers: state.answers,
+          certificates: state.certificates,
+          activeCertificateModuleId: state.activeCertificateModuleId,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+      }
+
+      function selectQuizzes(module) {
+        const quizzes = Array.isArray(module.quizzes) ? module.quizzes : [];
+        return shuffle(quizzes)
+          .slice(0, quizDisplayCount)
+          .map((quiz) => ({
+            ...quiz,
+            options: shuffle(Array.isArray(quiz.options) ? quiz.options : []),
+          }));
+      }
+
+      function shuffle(items) {
+        const copied = [...items];
+        for (let index = copied.length - 1; index > 0; index -= 1) {
+          const target = Math.floor(Math.random() * (index + 1));
+          [copied[index], copied[target]] = [copied[target], copied[index]];
+        }
+        return copied;
+      }
+
+      function renderQuizHosts() {
+        modules.forEach((module) => {
+          const host = document.querySelector(`[data-quiz-host][data-module-id="${module.id}"]`);
+          if (!host) return;
+          const questions = selectedQuizzes[module.id] || [];
+          host.innerHTML = "";
+          questions.forEach((quiz, questionIndex) => {
+            const fieldset = document.createElement("fieldset");
+            fieldset.className = "rounded-lg border border-brand-100 bg-white p-4";
+            fieldset.dataset.quizId = quiz.id;
+            fieldset.dataset.moduleId = module.id;
+
+            const legend = document.createElement("legend");
+            legend.className = "px-2 text-sm font-bold text-brand-900";
+            legend.textContent = `問${questionIndex + 1}`;
+            fieldset.appendChild(legend);
+
+            const question = document.createElement("p");
+            question.className = "mt-1 font-semibold text-brand-900";
+            question.textContent = quiz.question;
+            fieldset.appendChild(question);
+
+            const options = document.createElement("div");
+            options.className = "mt-3 grid gap-2";
+            quiz.options.forEach((option) => {
+              const label = document.createElement("label");
+              label.className = "flex cursor-pointer gap-3 rounded-lg border border-brand-100 bg-white px-4 py-3 text-brand-800 transition-colors hover:border-brand-300";
+
+              const input = document.createElement("input");
+              input.type = "radio";
+              input.name = `quiz-${module.id}-${quiz.id}`;
+              input.value = option.id;
+              input.className = "mt-1 h-4 w-4 accent-brand-600";
+              input.dataset.quizOption = "true";
+              input.dataset.moduleId = module.id;
+              input.dataset.quizId = quiz.id;
+
+              const text = document.createElement("span");
+              text.textContent = option.label;
+
+              label.append(input, text);
+              options.appendChild(label);
+            });
+            fieldset.appendChild(options);
+
+            const feedback = document.createElement("p");
+            feedback.className = "mt-2 min-h-5 text-sm font-bold";
+            feedback.dataset.quizFeedback = "true";
+            feedback.dataset.moduleId = module.id;
+            feedback.dataset.quizId = quiz.id;
+            fieldset.appendChild(feedback);
+
+            host.appendChild(fieldset);
+          });
+        });
+
+        document.querySelectorAll("[data-quiz-option]").forEach((input) => {
+          input.addEventListener("change", () => {
+            const moduleId = input.getAttribute("data-module-id");
+            const quizId = input.getAttribute("data-quiz-id");
+            if (!moduleId || !quizId) return;
+            state.answers[moduleId] = state.answers[moduleId] || {};
+            state.answers[moduleId][quizId] = input.value;
+            delete state.results[moduleId];
+            state.completed[moduleId] = false;
+            delete state.certificates[moduleId];
+            if (state.activeCertificateModuleId === moduleId) state.activeCertificateModuleId = null;
+            saveState();
+            render();
+          });
+        });
+      }
+
+      function render() {
+        renderLearner();
+        modules.forEach((module) => {
+            const status = getModuleStatus(module.id);
+            setStatusPill(document.querySelector(`[data-module-status][data-module-id="${module.id}"]`), status);
+            setStatusPill(document.querySelector(`[data-toc-status][data-module-id="${module.id}"]`), status);
+            const tocCard = document.querySelector(`[data-toc-card][data-module-id="${module.id}"]`);
+            if (tocCard) tocCard.setAttribute("data-status-tone", status.tone);
+
+          const summary = document.querySelector(`[data-quiz-summary][data-module-id="${module.id}"]`);
+          if (summary) {
+            const result = state.results[module.id];
+            if (!result) {
+              summary.textContent = "未採点";
+              summary.className = "self-start rounded-full bg-white px-3 py-1 text-xs font-bold text-brand-600 ring-1 ring-brand-100";
+            } else if (result.passed) {
+              summary.textContent = `合格 ${result.correct}/${result.total}`;
+              summary.className = "self-start rounded-full bg-brand-100 px-3 py-1 text-xs font-bold text-brand-700 ring-1 ring-brand-200";
+            } else {
+              summary.textContent = `再確認 ${result.correct}/${result.total}`;
+              summary.className = "self-start rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800 ring-1 ring-amber-200";
+            }
+          }
+
+          restoreAnswers(module.id);
+          renderQuizFeedback(module.id);
+          renderActionButtons(module.id);
+        });
+        renderCertificate();
+      }
+
+      function renderLearner() {
+        setInputValue("learner-name", state.learner.name || "");
+        setInputValue("learner-organization", state.learner.organization || "");
+      }
+
+      function restoreAnswers(moduleId) {
+        const answers = state.answers[moduleId] || {};
+        document
+          .querySelectorAll(`[data-quiz-option][data-module-id="${moduleId}"]`)
+          .forEach((input) => {
+            const quizId = input.getAttribute("data-quiz-id");
+            input.checked = quizId ? answers[quizId] === input.value : false;
+          });
+      }
+
+      function renderQuizFeedback(moduleId) {
+        const module = findModule(moduleId);
+        const result = state.results[moduleId];
+        const resultElement = document.querySelector(`[data-quiz-result][data-module-id="${moduleId}"]`);
+        if (resultElement) {
+          if (!result) {
+            resultElement.textContent = "";
+            resultElement.className = "mt-4 min-h-5 text-sm font-bold";
+          } else if (result.passed) {
+            resultElement.textContent = "全問正解です。受講完了ボタンを押せます。";
+            resultElement.className = "mt-4 min-h-5 text-sm font-bold text-brand-700";
+          } else if (!result.completed) {
+            resultElement.textContent = "小テストを完了してください。";
+            resultElement.className = "mt-4 min-h-5 text-sm font-bold text-amber-700";
+          } else {
+            resultElement.textContent = "不正解の設問があります。講義の該当箇所を見直してから再度回答してください。";
+            resultElement.className = "mt-4 min-h-5 text-sm font-bold text-amber-700";
+          }
+        }
+
+        (selectedQuizzes[moduleId] || []).forEach((quiz) => {
+          const feedback = document.querySelector(`[data-quiz-feedback][data-module-id="${moduleId}"][data-quiz-id="${quiz.id}"]`);
+          if (!feedback) return;
+          if (!result || !result.completed) {
+            feedback.textContent = "";
+            feedback.className = "mt-2 min-h-5 text-sm font-bold";
+            return;
+          }
+          const answer = state.answers[moduleId]?.[quiz.id];
+          if (answer === quiz.answer) {
+            feedback.textContent = "正解です。";
+            feedback.className = "mt-2 min-h-5 text-sm font-bold text-brand-700";
+          } else {
+            feedback.textContent = module
+              ? `${module.title}の該当箇所を見直してください。`
+              : "講義の該当箇所を見直してください。";
+            feedback.className = "mt-2 min-h-5 text-sm font-bold text-amber-700";
+          }
+        });
+      }
+
+      function renderActionButtons(moduleId) {
+        const canComplete = state.results[moduleId]?.passed === true;
+        const completed = state.completed[moduleId] === true;
+        const createButton = document.querySelector(`[data-create-certificate][data-module-id="${moduleId}"]`);
+        const completeButton = document.querySelector(`[data-complete-module][data-module-id="${moduleId}"]`);
+
+        if (completeButton) {
+          completeButton.textContent = completed ? "受講完了済み" : "受講完了にする";
+          completeButton.className = completed
+            ? "rounded-full bg-brand-100 px-4 py-2 text-sm font-semibold text-brand-700 ring-1 ring-brand-200"
+            : canComplete
+              ? "rounded-full bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
+              : "rounded-full border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-50";
+        }
+
+        if (createButton) {
+          createButton.disabled = !completed;
+          createButton.className = completed
+            ? "rounded-full bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
+            : "rounded-full border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-slate-400 disabled:cursor-not-allowed";
+        }
+      }
+
+      function getModuleStatus(moduleId) {
+        if (state.certificates[moduleId]) return { label: "修了書発行済み", tone: "complete" };
+        if (state.completed[moduleId]) return { label: "修了", tone: "complete" };
+        const result = state.results[moduleId];
+        if (result?.passed) return { label: "小テスト合格", tone: "ready" };
+        if (result && !result.passed) return { label: "見直し", tone: "review" };
+        return { label: "未受講", tone: "pending" };
+      }
+
+          function setStatusPill(element, status) {
+            if (!element) return;
+            element.textContent = status.label;
+            const base = element.hasAttribute("data-toc-status")
+              ? "training-toc-status shrink-0 rounded-full px-2 py-1 text-xs font-bold"
+              : "self-start rounded-full px-3 py-1 text-xs font-bold";
+        const tones = {
+          complete: "bg-brand-100 text-brand-700 ring-1 ring-brand-200",
+          ready: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
+          review: "bg-amber-100 text-amber-800 ring-1 ring-amber-200",
+          pending: "bg-slate-100 text-slate-600",
+        };
+        element.className = `${base} ${tones[status.tone] || tones.pending}`;
+      }
+
+      function gradeModule(moduleId, shouldToast = true) {
+        const questions = selectedQuizzes[moduleId] || [];
+        const answers = state.answers[moduleId] || {};
+        const total = questions.length;
+        const answered = questions.filter((quiz) => answers[quiz.id]).length;
+        const correct = questions.filter((quiz) => answers[quiz.id] === quiz.answer).length;
+        const completed = answered === total && total > 0;
+        const percentage = total === 0 ? 0 : Math.round((correct / total) * 100);
+        const passed = completed && percentage >= passingScore;
+        state.results[moduleId] = { correct, total, answered, completed, percentage, passed };
+        if (!passed) {
+          state.completed[moduleId] = false;
+          delete state.certificates[moduleId];
+          if (state.activeCertificateModuleId === moduleId) state.activeCertificateModuleId = null;
+        }
+        saveState();
+        render();
+
+        if (shouldToast) {
+          if (!completed) {
+            showToast("小テストを完了してください。", "warning");
+          } else if (!passed) {
+            showToast("不正解の設問があります。講義の該当箇所を見直してから再度回答してください。", "warning");
+          } else {
+            showToast("全問正解です。受講完了ボタンを押せます。", "success");
+          }
+        }
+
+        return state.results[moduleId];
+      }
+
+      function completeModule(moduleId) {
+        const result = state.results[moduleId] || gradeModule(moduleId, false);
+        if (!result.completed) {
+          showToast("小テストを完了してください。", "warning");
+          render();
+          return false;
+        }
+        if (!result.passed) {
+          showToast("不正解の設問があります。講義の該当箇所を見直してから再度回答してください。", "warning");
+          render();
+          return false;
+        }
+        state.completed[moduleId] = true;
+        saveState();
+        render();
+        showToast("受講完了にしました。修了書を作成できます。", "success");
+        return true;
+      }
+
+      function createCertificate(moduleId, shouldScroll = true) {
+        const module = findModule(moduleId);
+        if (!module) return null;
+        if (state.completed[moduleId] !== true) {
+          const result = state.results[moduleId];
+          if (!result?.completed) {
+            showToast("小テストを完了してください。", "warning");
+          } else if (!result?.passed) {
+            showToast("不正解の設問があります。講義の該当箇所を見直してから再度回答してください。", "warning");
+          } else {
+            showToast("受講完了ボタンを押してください。", "warning");
+          }
+          return null;
+        }
+
+        syncLearnerFromInputs();
+
+        state.certificates[moduleId] = {
+          moduleId,
+          moduleTitle: module.title,
+          displayNumber: module.displayNumber,
+          category: module.category,
+          name: state.learner.name.trim(),
+          organization: state.learner.organization?.trim() || "",
+          issuedAt: new Date().toISOString(),
+          serial: createSerial(module),
+        };
+        state.activeCertificateModuleId = moduleId;
+        saveState();
+        render();
+        showToast(`${module.title}の修了書を作成しました。`, "success");
+        if (shouldScroll) {
+          document.getElementById("certificate-preview")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return state.certificates[moduleId];
+      }
+
+      function renderCertificate() {
+        const preview = document.getElementById("certificate-preview");
+        const panelMessage = document.getElementById("certificate-panel-message");
+        if (!preview) return;
+
+        const moduleId = state.activeCertificateModuleId;
+        const certificate = moduleId ? state.certificates[moduleId] : null;
+        if (!certificate) {
+          preview.classList.add("hidden");
+          if (panelMessage) {
+            panelMessage.textContent = "各講義の小テストに全問正解し、受講完了後に修了書と受講者名簿を作成できます。";
+          }
+          return;
+        }
+
+        setText("certificate-preview-name", certificate.name || "");
+        setText("certificate-preview-organization", certificate.organization || "");
+        setText("certificate-preview-module", `${certificate.displayNumber} ${certificate.moduleTitle}`);
+        setText("certificate-preview-date", formatDate(certificate.issuedAt));
+        setText("certificate-preview-serial", `証明書番号: ${certificate.serial}`);
+        setText("certificate-roster-module", `${certificate.displayNumber} ${certificate.moduleTitle}`);
+        setText("certificate-roster-date", formatDate(certificate.issuedAt));
+        setText("certificate-roster-organization", certificate.organization || "");
+        if (panelMessage) {
+          panelMessage.textContent = `現在表示中: ${certificate.displayNumber} ${certificate.moduleTitle} の修了書・受講者名簿`;
+        }
+        preview.classList.remove("hidden");
+      }
+
+      function syncLearnerFromInputs() {
+        state.learner = {
+          name: document.getElementById("learner-name")?.value.trim() || "",
+          organization: document.getElementById("learner-organization")?.value.trim() || "",
+        };
+      }
+
+      function findModule(moduleId) {
+        return modules.find((module) => module.id === moduleId);
+      }
+
+      function setText(id, text) {
+        const element = document.getElementById(id);
+        if (element) element.textContent = text;
+      }
+
+      function setInputValue(id, value) {
+        const element = document.getElementById(id);
+        if (element && document.activeElement !== element) element.value = value;
+      }
+
+      function createSerial(module) {
+        const now = new Date();
+        const date = new Intl.DateTimeFormat("ja-JP", {
+          timeZone: "Asia/Tokyo",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(now).replace(/\D/g, "");
+        const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+        return `GHC-HK-${module.displayNumber.replace(/\W/g, "")}-${date}-${random}`;
+      }
+
+      function formatDate(value) {
+        return new Intl.DateTimeFormat("ja-JP", {
+          timeZone: "Asia/Tokyo",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        }).format(new Date(value));
+      }
+
+      function showToast(message, tone) {
+        const toast = document.getElementById("portal-toast");
+        if (!toast) return;
+        toast.textContent = message;
+        toast.className = tone === "success"
+          ? "fixed bottom-5 left-1/2 z-50 max-w-[min(92vw,40rem)] -translate-x-1/2 rounded-lg bg-brand-700 px-4 py-3 text-sm font-bold text-white shadow-lg no-print"
+          : "fixed bottom-5 left-1/2 z-50 max-w-[min(92vw,40rem)] -translate-x-1/2 rounded-lg bg-amber-100 px-4 py-3 text-sm font-bold text-amber-900 shadow-lg ring-1 ring-amber-200 no-print";
+        window.clearTimeout(showToast.timeoutId);
+        showToast.timeoutId = window.setTimeout(() => {
+          toast.classList.add("hidden");
+        }, 4200);
+      }
+
+      document.querySelectorAll("[data-grade-quiz]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const moduleId = button.getAttribute("data-module-id");
+          if (moduleId) gradeModule(moduleId);
+        });
+      });
+
+      document.querySelectorAll("[data-complete-module]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const moduleId = button.getAttribute("data-module-id");
+          if (moduleId) completeModule(moduleId);
+        });
+      });
+
+      document.querySelectorAll("[data-create-certificate]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const moduleId = button.getAttribute("data-module-id");
+          if (moduleId) createCertificate(moduleId);
+        });
+      });
+
+      ["certificate-preview-print", "certificate-preview-pdf"].forEach((id) => {
+        const button = document.getElementById(id);
+        if (!button) return;
+        button.addEventListener("click", () => window.print());
+      });
+
+      document.querySelectorAll("[data-module-video]").forEach((video) => {
+        video.addEventListener("ended", () => {
+          const moduleId = video.getAttribute("data-module-id");
+          if (!moduleId || state.completed[moduleId]) return;
+          showToast("動画を最後まで再生しました。小テストに全問正解後、受講完了にできます。", "success");
+        });
+      });
+
+      ["learner-name", "learner-organization"].forEach((id) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.addEventListener("input", () => {
+          syncLearnerFromInputs();
+          saveState();
+        });
+      });
+
+      renderQuizHosts();
+      render();
+    })();
+  </script>
+
+  <style is:global>
+    .training-toc-stage {
+      --color-canvas-mist: #e5e7eb;
+      --color-pure-white: #ffffff;
+      --color-surface-mist: #f3f3f3;
+      --color-ink-black: #000000;
+      --color-steel-gray: #979797;
+      --color-graphite: #444444;
+      --color-mint-pulse: #d1ffca;
+      --color-electric-yellow: #fff100;
+      --toc-accent-a: var(--color-mint-pulse);
+      --toc-accent-b: var(--color-electric-yellow);
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 8px;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(243, 243, 243, 0.94)),
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.035) 0 1px, transparent 1px 48px),
+        repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.025) 0 1px, transparent 1px 48px);
+      color: var(--color-ink-black);
+      padding: 24px;
+      box-shadow: 0 18px 38px rgba(0, 0, 0, 0.08);
+      font-family: var(--font-suisseintl, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+      letter-spacing: 0;
+    }
+
+    .training-toc-stage::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.42), rgba(243, 243, 243, 0.26)),
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.035) 0 1px, transparent 1px 48px),
+        repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.025) 0 1px, transparent 1px 48px);
+      opacity: 0.95;
+    }
+
+    .training-toc-build-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 1;
+    }
+
+    .training-toc-build-part {
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      width: var(--s);
+      height: var(--s);
+      border-radius: 4px;
+      opacity: 0;
+      transform: scale(0.35);
+      transform-origin: center;
+      animation: toc-build-assemble var(--duration) ease-out infinite;
+      animation-delay: var(--delay);
+      will-change: transform, opacity;
+    }
+
+    .training-toc-build-part[data-tone="mint"] {
+      background: color-mix(in srgb, var(--color-mint-pulse) 62%, transparent);
+    }
+
+    .training-toc-build-part[data-tone="yellow"] {
+      background: color-mix(in srgb, var(--color-electric-yellow) 34%, transparent);
+    }
+
+    .training-toc-grid-rule {
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      width: var(--w);
+      height: 1px;
+      background: rgba(0, 0, 0, 0.16);
+      opacity: 0;
+      transform: scaleX(0);
+      transform-origin: left center;
+      animation: toc-grid-rule-draw var(--duration) cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      animation-delay: var(--delay);
+      will-change: transform, opacity;
+    }
+
+    .training-toc-grid-mark {
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      width: 14px;
+      height: 14px;
+      margin: -7px 0 0 -7px;
+      opacity: 0.16;
+      animation: toc-grid-mark-pulse 6s ease-in-out infinite;
+      animation-delay: var(--delay);
+    }
+
+    .training-toc-grid-mark::before,
+    .training-toc-grid-mark::after {
+      content: "";
+      position: absolute;
+      background: rgba(0, 0, 0, 0.55);
+    }
+
+    .training-toc-grid-mark::before {
+      left: 0;
+      right: 0;
+      top: 6px;
+      height: 2px;
+    }
+
+    .training-toc-grid-mark::after {
+      top: 0;
+      bottom: 0;
+      left: 6px;
+      width: 2px;
+    }
+
+    .training-toc-grid-dot {
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      width: 6px;
+      height: 6px;
+      margin: -3px 0 0 -3px;
+      border-radius: 999px;
+      background: var(--color-graphite);
+      opacity: 0;
+      animation: toc-grid-dot-travel var(--duration) cubic-bezier(0.45, 0, 0.2, 1) infinite;
+      animation-delay: var(--delay);
+      will-change: transform, opacity;
+    }
+
+    .training-toc-grid-beam {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 2px;
+      background: var(--color-electric-yellow);
+      box-shadow: 0 0 18px 2px color-mix(in srgb, var(--color-electric-yellow) 55%, transparent);
+      opacity: 0;
+      animation: toc-grid-beam-sweep 18s cubic-bezier(0.6, 0.05, 0.4, 0.95) infinite;
+    }
+
+    .training-toc-grid-beam::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      right: 0;
+      width: 120px;
+      background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-electric-yellow) 14%, transparent));
+    }
+
+    .training-toc-header,
+    .training-toc-grid {
+      position: relative;
+      z-index: 2;
+    }
+
+    .training-toc-header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 24px;
+    }
+
+    .training-toc-kicker {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      border: 1px solid rgba(0, 0, 0, 0.16);
+      border-radius: 999px;
+      background: var(--color-electric-yellow);
+      color: var(--color-ink-black);
+      padding: 5px 10px;
+      font-size: 12px;
+      line-height: 1.3;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .training-toc-heading h2 {
+      margin-top: 12px;
+      color: var(--color-ink-black);
+      font-size: 32px;
+      line-height: 1.08;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .training-toc-heading p {
+      margin-top: 10px;
+      max-width: 48rem;
+      color: var(--color-graphite);
+      font-size: 15px;
+      line-height: 1.55;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .training-toc-rule {
+      display: grid;
+      gap: 2px;
+      min-width: 170px;
+      border: 1px solid rgba(0, 0, 0, 0.16);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.72);
+      padding: 12px 14px;
+      color: var(--color-ink-black);
+      text-align: left;
+    }
+
+    .training-toc-rule span,
+    .training-toc-rule small {
+      color: var(--color-graphite);
+      font-size: 12px;
+      line-height: 1.3;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+
+    .training-toc-rule strong {
+      color: var(--color-ink-black);
+      font-size: 28px;
+      line-height: 1.05;
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+
+    .training-toc-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin: 22px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .training-toc-card {
+      --toc-accent-a: var(--color-mint-pulse);
+      --toc-accent-b: var(--color-electric-yellow);
+      --toc-accent-delay: 0s;
+      --toc-accent-duration: 7s;
+      position: relative;
+      display: flex;
+      min-height: 112px;
+      align-items: stretch;
+      justify-content: space-between;
+      gap: 18px;
+      overflow: hidden;
+      border: 1px solid rgba(0, 0, 0, 0.13);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.9);
+      color: var(--color-ink-black);
+      padding: 18px;
+      text-decoration: none;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+      transition:
+        transform 180ms ease,
+        border-color 180ms ease,
+        box-shadow 180ms ease,
+        background-color 180ms ease;
+    }
+
+    .training-toc-card__accent {
+      position: absolute;
+      inset: -12% -16%;
+      background: linear-gradient(100deg, var(--toc-accent-a), var(--toc-accent-b));
+      opacity: 0.16;
+      transform: translateX(-88%) skewX(-12deg) scaleY(0.88);
+      transform-origin: left center;
+      animation: toc-card-accent-build var(--toc-accent-duration) cubic-bezier(0.55, 0, 0.2, 1) infinite;
+      animation-delay: var(--toc-accent-delay);
+      transition: opacity 180ms ease;
+      will-change: transform, opacity;
+    }
+
+    .training-toc-grid li:nth-child(3n + 1) .training-toc-card {
+      --toc-accent-a: var(--color-mint-pulse);
+      --toc-accent-b: var(--color-electric-yellow);
+    }
+
+    .training-toc-grid li:nth-child(3n + 2) .training-toc-card {
+      --toc-accent-a: #ffffff;
+      --toc-accent-b: var(--color-mint-pulse);
+    }
+
+    .training-toc-grid li:nth-child(3n) .training-toc-card {
+      --toc-accent-a: var(--color-electric-yellow);
+      --toc-accent-b: #ffffff;
+    }
+
+    .training-toc-grid li:nth-child(4n + 1) .training-toc-card {
+      --toc-accent-delay: -1s;
+      --toc-accent-duration: 7s;
+    }
+
+    .training-toc-grid li:nth-child(4n + 2) .training-toc-card {
+      --toc-accent-delay: -3s;
+      --toc-accent-duration: 8s;
+    }
+
+    .training-toc-grid li:nth-child(4n + 3) .training-toc-card {
+      --toc-accent-delay: -5s;
+      --toc-accent-duration: 9s;
+    }
+
+    .training-toc-grid li:nth-child(4n) .training-toc-card {
+      --toc-accent-delay: -2s;
+      --toc-accent-duration: 6s;
+    }
+
+    .training-toc-card[data-status-tone="complete"] {
+      border-color: rgba(0, 128, 82, 0.42);
+      background: linear-gradient(135deg, rgba(209, 255, 202, 0.8), rgba(255, 255, 255, 0.92));
+    }
+
+    .training-toc-card[data-status-tone="ready"] {
+      border-color: rgba(255, 241, 0, 0.72);
+      background: linear-gradient(135deg, rgba(255, 241, 0, 0.42), rgba(255, 255, 255, 0.94));
+    }
+
+    .training-toc-card[data-status-tone="review"] {
+      border-color: rgba(255, 184, 77, 0.7);
+      background: linear-gradient(135deg, rgba(255, 241, 0, 0.34), rgba(255, 246, 230, 0.95));
+    }
+
+    .training-toc-card__main,
+    .training-toc-card__side {
+      position: relative;
+      z-index: 1;
+    }
+
+    .training-toc-card__main {
+      display: flex;
+      min-width: 0;
+      gap: 14px;
+    }
+
+    .training-toc-number {
+      flex: 0 0 auto;
+      color: var(--color-ink-black);
+      font-size: 34px;
+      line-height: 0.95;
+      font-weight: 950;
+      letter-spacing: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .training-toc-copy {
+      display: grid;
+      min-width: 0;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .training-toc-title {
+      color: var(--color-ink-black);
+      font-size: 19px;
+      line-height: 1.25;
+      font-weight: 850;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .training-toc-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--color-graphite);
+      font-size: 13px;
+      line-height: 1.25;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .training-toc-meta span {
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.76);
+      padding: 4px 8px;
+    }
+
+    .training-toc-card__side {
+      display: grid;
+      flex: 0 0 auto;
+      align-content: space-between;
+      justify-items: end;
+      gap: 12px;
+    }
+
+    .training-toc-status {
+      white-space: nowrap;
+    }
+
+    .training-toc-arrow {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 1px solid rgba(0, 0, 0, 0.16);
+      border-radius: 999px;
+      background: var(--color-ink-black);
+      color: var(--color-pure-white);
+      font-size: 18px;
+      line-height: 1;
+      transition: transform 180ms ease;
+    }
+
+    .training-toc-card:focus-visible {
+      outline: 3px solid var(--color-electric-yellow);
+      outline-offset: 3px;
+    }
+
+    @media (hover: hover) {
+      .training-toc-card:hover {
+        border-color: rgba(0, 0, 0, 0.34);
+        box-shadow: 0 16px 26px rgba(0, 0, 0, 0.12);
+        transform: translateY(-2px);
+      }
+
+      .training-toc-card:hover .training-toc-card__accent {
+        animation: none;
+        opacity: 0.22;
+        transform: translateX(0) skewX(-12deg);
+      }
+
+      .training-toc-card:hover .training-toc-arrow {
+        transform: translateX(3px);
+      }
+    }
+
+    @keyframes toc-build-assemble {
+      0% {
+        opacity: 0;
+        transform: scale(0.35);
+        animation-timing-function: cubic-bezier(0.34, 1.4, 0.64, 1);
+      }
+
+      7% {
+        opacity: 0.55;
+        transform: scale(1);
+      }
+
+      32% {
+        opacity: 0.38;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0;
+        transform: scale(1);
+      }
+
+      100% {
+        opacity: 0;
+        transform: scale(0.35);
+      }
+    }
+
+    @keyframes toc-grid-rule-draw {
+      0% {
+        opacity: 0;
+        transform: scaleX(0);
+      }
+
+      10% {
+        opacity: 0.7;
+      }
+
+      34% {
+        opacity: 0.7;
+        transform: scaleX(1);
+      }
+
+      64% {
+        opacity: 0;
+        transform: scaleX(1);
+      }
+
+      100% {
+        opacity: 0;
+        transform: scaleX(1);
+      }
+    }
+
+    @keyframes toc-grid-mark-pulse {
+      0%,
+      100% {
+        opacity: 0.12;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.32;
+        transform: scale(1.15);
+      }
+    }
+
+    @keyframes toc-grid-dot-travel {
+      0% {
+        opacity: 0;
+        transform: translate3d(0, 0, 0);
+      }
+
+      8% {
+        opacity: 0.5;
+      }
+
+      62% {
+        opacity: 0.5;
+        transform: translate3d(var(--travel-x), var(--travel-y), 0);
+      }
+
+      72% {
+        opacity: 0;
+        transform: translate3d(var(--travel-x), var(--travel-y), 0);
+      }
+
+      100% {
+        opacity: 0;
+        transform: translate3d(var(--travel-x), var(--travel-y), 0);
+      }
+    }
+
+    @keyframes toc-grid-beam-sweep {
+      0% {
+        left: 0%;
+        opacity: 0;
+      }
+
+      3% {
+        opacity: 0.85;
+      }
+
+      38% {
+        opacity: 0.85;
+      }
+
+      42% {
+        left: 100%;
+        opacity: 0;
+      }
+
+      100% {
+        left: 100%;
+        opacity: 0;
+      }
+    }
+
+    @keyframes toc-card-accent-build {
+      0% {
+        opacity: 0.08;
+        transform: translateX(-92%) skewX(-12deg) scaleY(0.82);
+      }
+
+      24% {
+        opacity: 0.2;
+        transform: translateX(-72%) skewX(-12deg) scaleY(0.96);
+      }
+
+      58% {
+        opacity: 0.24;
+        transform: translateX(-28%) skewX(-12deg) scaleY(1);
+      }
+
+      100% {
+        opacity: 0.1;
+        transform: translateX(18%) skewX(-12deg) scaleY(0.9);
+      }
+    }
+
+    @media (max-width: 900px) {
+      .training-toc-header,
+      .training-toc-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .training-toc-rule {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .training-toc-stage {
+        padding: 18px;
+      }
+
+      .training-toc-build-part:nth-child(n + 8) {
+        display: none;
+      }
+
+      .training-toc-grid-mark,
+      .training-toc-grid-dot,
+      .training-toc-grid-rule {
+        display: none;
+      }
+
+      .training-toc-build-part {
+        animation-duration: calc(var(--duration) * 1.4);
+      }
+
+      .training-toc-card {
+        flex-direction: column;
+        align-items: stretch;
+        min-height: 0;
+        gap: 14px;
+        padding: 16px;
+      }
+
+      .training-toc-card__main {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: start;
+        gap: 12px;
+        width: 100%;
+      }
+
+      .training-toc-copy {
+        display: contents;
+        width: 100%;
+      }
+
+      .training-toc-number {
+        font-size: 28px;
+      }
+
+      .training-toc-title {
+        font-size: 17px;
+        overflow-wrap: break-word;
+        word-break: normal;
+      }
+
+      .training-toc-meta {
+        grid-column: 1 / -1;
+        margin-top: 2px;
+      }
+
+      .training-toc-card__side {
+        display: flex;
+        flex-wrap: wrap;
+        align-content: start;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
+      }
+
+      .training-toc-meta span {
+        white-space: normal;
+      }
+
+      .training-toc-arrow {
+        display: none;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .training-toc-stage::before,
+      .training-toc-build-part,
+      .training-toc-grid-rule,
+      .training-toc-grid-mark,
+      .training-toc-grid-dot,
+      .training-toc-grid-beam,
+      .training-toc-card,
+      .training-toc-card__accent,
+      .training-toc-arrow {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+
+    @media print {
+      @page {
+        size: A4 portrait;
+        margin: 0;
+      }
+
+          body {
+            background: #fff !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+
+      header,
+      footer,
+      .no-print,
+      astro-dev-toolbar {
+        display: none !important;
+      }
+
+          main {
+            display: block;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+
+          .certificate-print {
+            display: block !important;
+            max-width: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+            break-after: avoid;
+            page-break-after: avoid;
+            width: 100% !important;
+          }
+
+          .certificate-sheet {
+            box-sizing: border-box;
+            display: flex !important;
+            flex-direction: column;
+            justify-content: center;
+            height: 297mm;
+            min-height: 297mm;
+            overflow: hidden;
+            padding: 18mm 16mm !important;
+          }
+
+          .certificate-roster {
+            box-sizing: border-box;
+            break-before: page;
+            page-break-before: always;
+            height: 297mm;
+            min-height: 297mm;
+            overflow: hidden;
+            margin-top: 0 !important;
+            padding: 16mm 14mm !important;
+          }
+
+          .certificate-print h2 {
+            font-size: 36px !important;
+            line-height: 1.15 !important;
+            margin-top: 12px !important;
+          }
+
+          .certificate-print p {
+            font-size: 15px !important;
+            line-height: 1.6 !important;
+            margin-top: 20px !important;
+          }
+
+          .certificate-print .mt-10 {
+            margin-top: 24px !important;
+          }
+
+          .certificate-print .mt-8 {
+            margin-top: 20px !important;
+          }
+
+          .certificate-roster table {
+            font-size: 13px !important;
+          }
+
+          .certificate-roster th,
+          .certificate-roster td {
+            padding: 11px 9px !important;
+          }
+        }
+      </style>
+</Layout>
