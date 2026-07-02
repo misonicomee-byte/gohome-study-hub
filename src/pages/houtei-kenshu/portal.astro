@@ -34,12 +34,18 @@ const TOWER_FACES = {
   white: "--ft: #ffffff; --fl: #e9ebee; --fr: #d4d7db;",
   magenta: "--ft: #ff4fa3; --fl: #e02f86; --fr: #b8236c;",
 };
+// Five cubes ride a carousel around the column: every 3.6s all of them hop
+// one station forward (left-mid → left-top → top → right-top → right-mid →
+// across the floor in front → left-mid), so the arrangement keeps
+// restacking. The 18s orbit and the 16s column loop drift against each
+// other, so the combined pattern only repeats every 144s.
+const CUBE_SCALE = 0.7;
 const tocTowerCubes = [
-  { tone: "mint", x: 50, y: 104, scale: 0.8, drop: 0.55, loop: "docker", loopStyle: "--loop-delay: 9s; --dock-amp: -16px;", behind: true },
-  { tone: "yellow", x: 150, y: 96, scale: 0.9, drop: 0.65, loop: "docker", loopStyle: "--loop-delay: 3.4s; --dock-amp: 16px;" },
-  { tone: "magenta", x: 152, y: 54, scale: 0.55, drop: 0.75, loop: "floater", loopStyle: "--float-duration: 4.2s; --float-amp: -18px; --sway-x: -6px;" },
-  { tone: "yellow", x: 58, y: 46, scale: 0.5, drop: 0.85, loop: "floater", loopStyle: "--float-duration: 3.6s; --float-amp: -20px; --sway-x: 5px;" },
-  { tone: "white", x: 102, y: 10, scale: 0.45, drop: 0.95, loop: "floater", loopStyle: "--float-duration: 4.8s; --float-amp: -16px; --sway-x: -4px;" },
+  { tone: "mint", x: 50, y: 104, orbit: "a", drop: 0.55 },
+  { tone: "yellow", x: 58, y: 46, orbit: "b", drop: 0.65 },
+  { tone: "white", x: 102, y: 10, orbit: "c", drop: 0.75 },
+  { tone: "magenta", x: 152, y: 54, orbit: "d", drop: 0.85 },
+  { tone: "yellow", x: 150, y: 96, orbit: "e", drop: 0.95 },
 ].map((cube) => ({
   ...cube,
   style: `${TOWER_FACES[cube.tone]} --drop-delay: ${cube.drop}s;`,
@@ -47,7 +53,6 @@ const tocTowerCubes = [
 const TOWER_LOOP_CLASS = {
   lifter: "toc-tower-lifter",
   docker: "toc-tower-docker",
-  floater: "toc-tower-floater",
 };
 ---
 
@@ -132,13 +137,6 @@ const TOWER_LOOP_CLASS = {
                 <path d="M0 2.2 H16 M0 5.4 H16 M0 7.8 H16" stroke="#c6a06b" stroke-width="0.7" fill="none" />
               </pattern>
             </defs>
-            {tocTowerCubes.filter((cube) => cube.behind).map((cube) => (
-              <g transform={`translate(${cube.x}, ${cube.y}) scale(${cube.scale})`}>
-                <g class={TOWER_LOOP_CLASS[cube.loop]} style={cube.loopStyle}>
-                  <use href="#toc-iso-block" class="toc-tower-block" style={cube.style} />
-                </g>
-              </g>
-            ))}
             {tocTowerSegments.map((segment) => (
               <g transform={`translate(100, ${segment.y})`}>
                 <g class={segment.loop ? TOWER_LOOP_CLASS[segment.loop] : undefined} style={segment.loopStyle}>
@@ -156,10 +154,12 @@ const TOWER_LOOP_CLASS = {
                 </g>
               </g>
             ))}
-            {tocTowerCubes.filter((cube) => !cube.behind).map((cube) => (
-              <g transform={`translate(${cube.x}, ${cube.y}) scale(${cube.scale})`}>
-                <g class={TOWER_LOOP_CLASS[cube.loop]} style={cube.loopStyle}>
-                  <use href="#toc-iso-block" class="toc-tower-block" style={cube.style} />
+            {tocTowerCubes.map((cube) => (
+              <g transform={`translate(${cube.x}, ${cube.y})`}>
+                <g class={`toc-tower-orbiter toc-tower-orbit-${cube.orbit}`}>
+                  <g transform={`scale(${CUBE_SCALE})`}>
+                    <use href="#toc-iso-block" class="toc-tower-block" style={cube.style} />
+                  </g>
                 </g>
               </g>
             ))}
@@ -978,9 +978,28 @@ const TOWER_LOOP_CLASS = {
       will-change: transform;
     }
 
-    .toc-tower-floater {
-      animation: toc-tower-float var(--float-duration, 4s) ease-in-out infinite alternate;
+    .toc-tower-orbiter {
       will-change: transform;
+    }
+
+    .toc-tower-orbit-a {
+      animation: toc-orbit-a 18s ease-in-out infinite;
+    }
+
+    .toc-tower-orbit-b {
+      animation: toc-orbit-b 18s ease-in-out infinite;
+    }
+
+    .toc-tower-orbit-c {
+      animation: toc-orbit-c 18s ease-in-out infinite;
+    }
+
+    .toc-tower-orbit-d {
+      animation: toc-orbit-d 18s ease-in-out infinite;
+    }
+
+    .toc-tower-orbit-e {
+      animation: toc-orbit-e 18s ease-in-out infinite;
     }
 
     .training-toc-kicker {
@@ -1287,14 +1306,77 @@ const TOWER_LOOP_CLASS = {
       }
     }
 
-    @keyframes toc-tower-float {
-      from {
-        transform: translate(0, 0);
-      }
+    /* Carousel stations: A left-mid, B left-top, C top, D right-top,
+       E right-mid; E→A crosses the floor in front at (112, 150). Each
+       cube hops one station forward every 20% of the 18s loop. */
+    @keyframes toc-orbit-a {
+      0% { transform: translate(0, 0); }
+      4.5% { transform: translate(4px, -45px); }
+      9%, 20% { transform: translate(8px, -58px); }
+      24.5% { transform: translate(30px, -92px); }
+      29%, 40% { transform: translate(52px, -94px); }
+      44.5% { transform: translate(77px, -88px); }
+      49%, 60% { transform: translate(102px, -50px); }
+      64.5% { transform: translate(101px, -45px); }
+      69%, 80% { transform: translate(100px, -8px); }
+      84.5% { transform: translate(62px, 46px); }
+      89%, 100% { transform: translate(0, 0); }
+    }
 
-      to {
-        transform: translate(var(--sway-x, 0px), var(--float-amp, -6px));
-      }
+    @keyframes toc-orbit-b {
+      0% { transform: translate(0, 0); }
+      4.5% { transform: translate(22px, -34px); }
+      9%, 20% { transform: translate(44px, -36px); }
+      24.5% { transform: translate(69px, -30px); }
+      29%, 40% { transform: translate(94px, 8px); }
+      44.5% { transform: translate(93px, 13px); }
+      49%, 60% { transform: translate(92px, 50px); }
+      64.5% { transform: translate(54px, 104px); }
+      69%, 80% { transform: translate(-8px, 58px); }
+      84.5% { transform: translate(-4px, 13px); }
+      89%, 100% { transform: translate(0, 0); }
+    }
+
+    @keyframes toc-orbit-c {
+      0% { transform: translate(0, 0); }
+      4.5% { transform: translate(25px, 6px); }
+      9%, 20% { transform: translate(50px, 44px); }
+      24.5% { transform: translate(49px, 49px); }
+      29%, 40% { transform: translate(48px, 86px); }
+      44.5% { transform: translate(10px, 140px); }
+      49%, 60% { transform: translate(-52px, 94px); }
+      64.5% { transform: translate(-48px, 49px); }
+      69%, 80% { transform: translate(-44px, 36px); }
+      84.5% { transform: translate(-22px, 2px); }
+      89%, 100% { transform: translate(0, 0); }
+    }
+
+    @keyframes toc-orbit-d {
+      0% { transform: translate(0, 0); }
+      4.5% { transform: translate(-1px, 5px); }
+      9%, 20% { transform: translate(-2px, 42px); }
+      24.5% { transform: translate(-40px, 96px); }
+      29%, 40% { transform: translate(-102px, 50px); }
+      44.5% { transform: translate(-98px, 5px); }
+      49%, 60% { transform: translate(-94px, -8px); }
+      64.5% { transform: translate(-72px, -42px); }
+      69%, 80% { transform: translate(-50px, -44px); }
+      84.5% { transform: translate(-25px, -38px); }
+      89%, 100% { transform: translate(0, 0); }
+    }
+
+    @keyframes toc-orbit-e {
+      0% { transform: translate(0, 0); }
+      4.5% { transform: translate(-38px, 54px); }
+      9%, 20% { transform: translate(-100px, 8px); }
+      24.5% { transform: translate(-96px, -37px); }
+      29%, 40% { transform: translate(-92px, -50px); }
+      44.5% { transform: translate(-70px, -84px); }
+      49%, 60% { transform: translate(-48px, -86px); }
+      64.5% { transform: translate(-23px, -80px); }
+      69%, 80% { transform: translate(2px, -42px); }
+      84.5% { transform: translate(1px, -37px); }
+      89%, 100% { transform: translate(0, 0); }
     }
 
     @keyframes toc-card-accent-build {
@@ -1399,7 +1481,7 @@ const TOWER_LOOP_CLASS = {
       .training-toc-tower .toc-tower-block,
       .training-toc-tower .toc-tower-lifter,
       .training-toc-tower .toc-tower-docker,
-      .training-toc-tower .toc-tower-floater,
+      .training-toc-tower .toc-tower-orbiter,
       .training-toc-card,
       .training-toc-card__accent,
       .training-toc-arrow {

@@ -43,15 +43,15 @@ hovering around the top. Light from the upper left; self-shadow via
 translucent black overlays on the front (10%) and right (22%) faces.
 No ground shadow.
 
-Motion — one beat per element staggered over a 16s loop plus ever-running
-floaters, so movement never stops and comes from every direction:
-- terrazzo segment slides out left −12px and back (right-to-left drawer)
-- yellow peg docks out right +16px and back (left-to-right)
-- crown lifts −10px with a settle bounce (bottom-to-top)
-- mint peg docks out left −16px and back
-- yellow band slides out right +14px and back
-- three floaters (magenta, yellow, white) bob ±16–20px with horizontal sway,
-  periods 3.6/4.2/4.8s so phases never align
+Motion — the cubes perpetually restack (v5 carousel):
+- Five uniform cubes ride a carousel around the column over an 18s loop:
+  stations left-mid → left-top → top → right-top → right-mid → across the
+  floor in front → left-mid. Every 3.6s all five hop one station forward
+  (1.6s arcs with raised midpoints), so the arrangement visibly swaps and
+  re-stacks forever. Keyframes `toc-orbit-a`–`toc-orbit-e`.
+- Column beats on a separate 16s loop: terrazzo segment drawer-slides left,
+  yellow band slides right, crown lifts with a settle bounce. 16s vs 18s
+  drift means the combined pattern repeats only every 144s.
 
 Transform layering rule: position (attribute transform on wrapper g) >
 loop motion (`.toc-tower-lifter` / `.toc-tower-docker` / `.toc-tower-floater`

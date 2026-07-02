@@ -73,11 +73,12 @@ test("training toc puts a single playful block tower on a flat canvas", () => {
   assert.match(portalSource, /@keyframes toc-tower-drop/);
   assert.match(portalSource, /@keyframes toc-tower-lift/);
   assert.match(portalSource, /@keyframes toc-tower-dock/);
-  assert.match(portalSource, /@keyframes toc-tower-float/);
+  assert.match(portalSource, /@keyframes toc-orbit-a/);
+  assert.match(portalSource, /@keyframes toc-orbit-e/);
   assert.match(reducedMotionStyles, /toc-tower-block/);
   assert.match(reducedMotionStyles, /toc-tower-lifter/);
   assert.match(reducedMotionStyles, /toc-tower-docker/);
-  assert.match(reducedMotionStyles, /toc-tower-floater/);
+  assert.match(reducedMotionStyles, /toc-tower-orbiter/);
 
   // The decorative background layers must stay gone.
   assert.doesNotMatch(portalSource, /training-toc-build-layer/);
