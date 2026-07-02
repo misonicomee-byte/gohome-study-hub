@@ -56,53 +56,40 @@ test("training table of contents uses a colorful animated link grid", () => {
   assert.match(tocSection, /href={`#module-\$\{item\.id\}`}/);
   assert.match(portalSource, /--color-mint-pulse:\s*#d1ffca;/);
   assert.match(portalSource, /--color-electric-yellow:\s*#fff100;/);
-  assert.match(portalSource, /@keyframes toc-build-assemble/);
+  assert.match(portalSource, /@keyframes toc-tower-drop/);
   assert.match(portalSource, /prefers-reduced-motion:\s*reduce/);
 });
 
-test("training table of contents uses subtle assembling background graphics", () => {
+test("training toc puts a single playful block tower on a flat canvas", () => {
   const tocSection = portalSource.match(/<nav class="training-toc-stage[\s\S]*?<\/nav>/)?.[0] || "";
   const reducedMotionStyles = portalSource.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n    \}/)?.[0] || "";
 
-  assert.match(tocSection, /class="training-toc-build-layer"/);
-  assert.match(tocSection, /class="training-toc-build-part"/);
+  assert.match(tocSection, /class="training-toc-tower"/);
   assert.match(tocSection, /aria-hidden="true"/);
-  assert.match(portalSource, /@keyframes toc-build-assemble/);
-  assert.match(portalSource, /\.training-toc-build-part\s*{[\s\S]*animation:\s*toc-build-assemble/);
-  assert.match(reducedMotionStyles, /\.training-toc-build-part/);
-  assert.doesNotMatch(portalSource, /animation:\s*toc-accent-slide 14s linear infinite;/);
-});
+  assert.match(tocSection, /toc-iso-block/);
+  assert.match(portalSource, /@keyframes toc-tower-drop/);
+  assert.match(portalSource, /@keyframes toc-tower-hop/);
+  assert.match(reducedMotionStyles, /toc-tower-block/);
+  assert.match(reducedMotionStyles, /toc-tower-hopper/);
 
-test("training table of contents background is a grid-aligned blueprint animation", () => {
-  const tocSection = portalSource.match(/<nav class="training-toc-stage[\s\S]*?<\/nav>/)?.[0] || "";
-
-  assert.match(portalSource, /const GRID_UNIT = 48;/);
-  assert.match(tocSection, /class="training-toc-grid-beam"/);
-  assert.match(tocSection, /class="training-toc-grid-mark"/);
-  assert.match(tocSection, /class="training-toc-grid-rule"/);
-  assert.match(tocSection, /class="training-toc-grid-dot"/);
-  assert.match(portalSource, /@keyframes toc-grid-beam-sweep/);
-  assert.match(portalSource, /@keyframes toc-grid-mark-pulse/);
-  assert.match(portalSource, /@keyframes toc-grid-rule-draw/);
-  assert.match(portalSource, /@keyframes toc-grid-dot-travel/);
-  assert.match(portalSource, /--color-mint-pulse:\s*#d1ffca;/);
-  assert.match(portalSource, /--color-electric-yellow:\s*#fff100;/);
-
-  // The chaotic free-floating layer must stay gone.
+  // The decorative background layers must stay gone.
+  assert.doesNotMatch(portalSource, /training-toc-build-layer/);
   assert.doesNotMatch(portalSource, /training-toc-frame-part/);
-  assert.doesNotMatch(portalSource, /toc-frame-part-build/);
+  assert.doesNotMatch(portalSource, /training-toc-grid-beam/);
 });
 
-test("training table of contents background parts move only along grid axes", () => {
-  const pulses = portalSource.match(/const tocGridPulses = \[[\s\S]*?\]\.map/)?.[0] || "";
-  const pulseCount = (pulses.match(/tone:/g) || []).length;
-  const buildLayerStyles = portalSource.match(/\.training-toc-build-part\s*{[\s\S]*?}/)?.[0] || "";
+test("training toc surfaces stay flat per the Swiss editorial reference", () => {
+  const stageStyles = portalSource.match(/\.training-toc-stage\s*{[\s\S]*?}/)?.[0] || "";
+  const cardStyles = portalSource.match(/\.training-toc-card\s*{[\s\S]*?}/)?.[0] || "";
+  const statusTones = portalSource.match(/\.training-toc-card\[data-status-tone[\s\S]*?review"\]\s*{[\s\S]*?}/)?.[0] || "";
 
-  assert.ok(pulseCount >= 12);
-  assert.match(portalSource, /translate3d\(var\(--travel-x\), var\(--travel-y\), 0\)/);
-  assert.doesNotMatch(buildLayerStyles, /rotate\(/);
-  assert.match(portalSource, /color-mix\(in srgb, var\(--color-mint-pulse\)/);
-  assert.match(portalSource, /color-mix\(in srgb, var\(--color-electric-yellow\)/);
+  assert.match(stageStyles, /background:\s*var\(--color-canvas-mist\)/);
+  assert.doesNotMatch(stageStyles, /box-shadow/);
+  assert.doesNotMatch(stageStyles, /gradient/);
+  assert.doesNotMatch(cardStyles, /box-shadow/);
+  assert.doesNotMatch(cardStyles, /gradient/);
+  assert.doesNotMatch(statusTones, /gradient/);
+  assert.match(cardStyles, /background:\s*var\(--color-pure-white\)/);
 });
 
 test("training table of contents animates the visible card accent planes", () => {
