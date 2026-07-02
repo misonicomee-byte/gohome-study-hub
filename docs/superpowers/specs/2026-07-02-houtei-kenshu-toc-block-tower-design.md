@@ -33,20 +33,24 @@ and confirmed by inspecting dayos.com:
 - Status tints and card accent washes: flat `color-mix` solids, no gradients.
 - Kicker pill: mono uppercase on electric yellow.
 
-### The playful object: isometric block tower
-Inline SVG in the header row (between heading and 合格基準 card), built from
-one reusable `#toc-iso-block` (3 polygons, 2:1 dimetric). Iso cell math:
-`x = 80 + (i - j) * 24`, `y = 110 + (i + j) * 12 - k * 20`.
+### The playful object: hex column with bursting cubes (v3)
+Inline SVG in the header row (between heading and 合格基準 card), matching the
+reference's 3D hero object: a neutral stone hexagonal column with bright cubes
+bursting from the top. Cubes reuse one `#toc-iso-block` (3 polygons, 2:1
+dimetric); light from the upper left, so left faces are lighter (self-shadow).
+No ground shadow.
 
-Blocks: yellow base + mint and white flanking columns + yellow second story +
-one ink-black block on top.
+Composition (painter's order, back to front): hex column → mint cube (back) →
+big yellow cube (front, the dominant hue) → small white cube (front-left) →
+two floaters above (small magenta, small yellow).
 
-12s loop (`toc-tower-drop` / `toc-tower-hop`):
-1. Blocks drop in staggered with a small bounce (0–1.6s).
-2. Hold.
-3. The black block hops from the yellow column onto the white column (~5.3s),
-   perches there, hops back (~9.6s).
-4. Tower scatters upward and reassembles — the dayos "restack" beat.
+Motion (`toc-tower-drop` / `toc-tower-float`): every piece drops in once on
+load with a staggered bounce (0.8s each, 0–0.75s delays, fill both), then the
+two floaters bob continuously (±6px, 3.8s/4.6s ease-in-out alternate) while
+the seated pieces stay still. Nothing vanishes or loops through re-assembly.
+Positioning `transform` attributes live on wrapper `<g>` elements; CSS
+animation transforms live on the inner element — never both on one node
+(CSS transform replaces the attribute transform).
 
 ### Accessibility / responsive
 - Tower is `aria-hidden`, hidden below 1024px (mobile gets the pure flat canvas).
