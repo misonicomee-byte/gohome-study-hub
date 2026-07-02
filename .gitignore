@@ -3,6 +3,8 @@ dist/
 # generated types
 .astro/
 .wrangler/
+# local verification artifacts (playwright screenshots, logs)
+output/
 
 # dependencies
 node_modules/
