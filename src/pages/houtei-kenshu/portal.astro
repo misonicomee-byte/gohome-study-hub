@@ -26,30 +26,21 @@ const tocTowerSegments = [
   { y: 118, top: "#3b332e", side: "#2b2523", drop: 0.12 },
   { y: 94, top: "#f3f1ea", side: "url(#toc-terrazzo)", drop: 0.24, loop: "docker", loopStyle: "--loop-delay: 0.9s; --dock-amp: -12px;" },
   { y: 70, top: "#fff100", side: "#fff100", drop: 0.36, loop: "docker", loopStyle: "--loop-delay: 11.8s; --dock-amp: 14px;" },
-  { y: 46, top: "#ff4fa3", side: "url(#toc-terrazzo)", drop: 0.48, loop: "lifter", loopStyle: "--loop-delay: 6.4s; --lift-amp: -10px;" },
+  { y: 46, top: "#ff4fa3", side: "url(#toc-terrazzo)", drop: 0.48, loop: "lifter", loopStyle: "--loop-delay: 3.6s; --lift-amp: -10px;" },
 ];
-const TOWER_FACES = {
-  yellow: "--ft: #fff100; --fl: #e3d600; --fr: #bfb500;",
-  mint: "--ft: #d1ffca; --fl: #b5efaa; --fr: #93dc86;",
-  white: "--ft: #ffffff; --fl: #e9ebee; --fr: #d4d7db;",
-  magenta: "--ft: #ff4fa3; --fl: #e02f86; --fr: #b8236c;",
-};
-// Five cubes ride a carousel around the column: every 3.6s all of them hop
-// one station forward (left-mid → left-top → top → right-top → right-mid →
-// across the floor in front → left-mid), so the arrangement keeps
-// restacking. The 18s orbit and the 16s column loop drift against each
-// other, so the combined pattern only repeats every 144s.
+// Five material cubes (mint, terrazzo, yellow, magenta, wood) run a 24s
+// formation cycle: docked at the column sides → exploded halo (scaled up
+// 1.12 for depth) → criss-cross flight into a pyramid stacked on the crown
+// → staggered cascade back to the docked stations. The 24s cube loop and
+// the 16s column drawers drift against each other (repeats every 48s).
 const CUBE_SCALE = 0.7;
 const tocTowerCubes = [
   { tone: "mint", x: 50, y: 104, orbit: "a", drop: 0.55 },
-  { tone: "yellow", x: 58, y: 46, orbit: "b", drop: 0.65 },
-  { tone: "white", x: 102, y: 10, orbit: "c", drop: 0.75 },
+  { tone: "terrazzo", x: 102, y: 10, orbit: "b", drop: 0.65 },
+  { tone: "yellow", x: 58, y: 46, orbit: "c", drop: 0.75 },
   { tone: "magenta", x: 152, y: 54, orbit: "d", drop: 0.85 },
-  { tone: "yellow", x: 150, y: 96, orbit: "e", drop: 0.95 },
-].map((cube) => ({
-  ...cube,
-  style: `${TOWER_FACES[cube.tone]} --drop-delay: ${cube.drop}s;`,
-}));
+  { tone: "wood", x: 150, y: 96, orbit: "e", drop: 0.95 },
+];
 const TOWER_LOOP_CLASS = {
   lifter: "toc-tower-lifter",
   docker: "toc-tower-docker",
@@ -118,10 +109,73 @@ const TOWER_LOOP_CLASS = {
         <span class="training-toc-tower" aria-hidden="true">
           <svg viewBox="0 0 200 196" role="presentation" focusable="false">
             <defs>
-              <g id="toc-iso-block">
-                <polygon points="0,-12 24,0 0,12 -24,0" fill="var(--ft)" />
-                <polygon points="-24,0 0,12 0,32 -24,20" fill="var(--fl)" />
-                <polygon points="24,0 0,12 0,32 24,20" fill="var(--fr)" />
+              <linearGradient id="toc-gy-l" x1="0" y1="0" x2="0.3" y2="1">
+                <stop offset="0" stop-color="#f4e800" />
+                <stop offset="1" stop-color="#d6ca00" />
+              </linearGradient>
+              <linearGradient id="toc-gy-r" x1="0" y1="0" x2="0.6" y2="1">
+                <stop offset="0" stop-color="#d3c700" />
+                <stop offset="1" stop-color="#a19800" />
+              </linearGradient>
+              <linearGradient id="toc-gm-l" x1="0" y1="0" x2="0.3" y2="1">
+                <stop offset="0" stop-color="#c3f5b8" />
+                <stop offset="1" stop-color="#a0e093" />
+              </linearGradient>
+              <linearGradient id="toc-gm-r" x1="0" y1="0" x2="0.6" y2="1">
+                <stop offset="0" stop-color="#9ade8d" />
+                <stop offset="1" stop-color="#74bf66" />
+              </linearGradient>
+              <linearGradient id="toc-gp-l" x1="0" y1="0" x2="0.3" y2="1">
+                <stop offset="0" stop-color="#f04397" />
+                <stop offset="1" stop-color="#d22a7c" />
+              </linearGradient>
+              <linearGradient id="toc-gp-r" x1="0" y1="0" x2="0.6" y2="1">
+                <stop offset="0" stop-color="#cf2876" />
+                <stop offset="1" stop-color="#9d1657" />
+              </linearGradient>
+              <pattern id="toc-noise" width="7" height="7" patternUnits="userSpaceOnUse">
+                <circle cx="1.4" cy="2" r="0.5" fill="rgba(0, 0, 0, 0.05)" />
+                <circle cx="4.8" cy="0.9" r="0.4" fill="rgba(255, 255, 255, 0.16)" />
+                <circle cx="3.4" cy="4.9" r="0.5" fill="rgba(0, 0, 0, 0.06)" />
+                <circle cx="6" cy="3.6" r="0.35" fill="rgba(255, 255, 255, 0.12)" />
+              </pattern>
+              <g id="toc-cube-yellow">
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="url(#toc-gy-l)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="url(#toc-gy-r)" />
+                <polygon points="0,-12 24,0 0,12 -24,0" fill="#fff53d" stroke="rgba(255, 255, 255, 0.5)" stroke-width="1" />
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="url(#toc-noise)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="url(#toc-noise)" />
+                <polygon points="0,-12 24,0 0,12 -24,0" fill="url(#toc-noise)" />
+              </g>
+              <g id="toc-cube-mint">
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="url(#toc-gm-l)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="url(#toc-gm-r)" />
+                <polygon points="0,-12 24,0 0,12 -24,0" fill="#dcffd6" stroke="rgba(255, 255, 255, 0.55)" stroke-width="1" />
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="url(#toc-noise)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="url(#toc-noise)" />
+                <polygon points="0,-12 24,0 0,12 -24,0" fill="url(#toc-noise)" />
+              </g>
+              <g id="toc-cube-magenta">
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="url(#toc-gp-l)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="url(#toc-gp-r)" />
+                <polygon points="0,-12 24,0 0,12 -24,0" fill="#ff63ae" stroke="rgba(255, 255, 255, 0.45)" stroke-width="1" />
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="url(#toc-noise)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="url(#toc-noise)" />
+                <polygon points="0,-12 24,0 0,12 -24,0" fill="url(#toc-noise)" />
+              </g>
+              <g id="toc-cube-terrazzo">
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="url(#toc-terrazzo)" />
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="rgba(0, 0, 0, 0.06)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="url(#toc-terrazzo)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="rgba(0, 0, 0, 0.2)" />
+                <polygon points="0,-12 24,0 0,12 -24,0" fill="url(#toc-terrazzo)" stroke="rgba(255, 255, 255, 0.6)" stroke-width="1" />
+              </g>
+              <g id="toc-cube-wood">
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="url(#toc-wood)" />
+                <polygon points="-24,0 0,12 0,32 -24,20" fill="rgba(0, 0, 0, 0.06)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="url(#toc-wood)" />
+                <polygon points="24,0 0,12 0,32 24,20" fill="rgba(0, 0, 0, 0.22)" />
+                <polygon points="0,-12 24,0 0,12 -24,0" fill="#ecd9b0" stroke="rgba(255, 255, 255, 0.5)" stroke-width="1" />
               </g>
               <pattern id="toc-terrazzo" width="13" height="13" patternUnits="userSpaceOnUse">
                 <rect width="13" height="13" fill="#f3f1ea" />
@@ -158,7 +212,7 @@ const TOWER_LOOP_CLASS = {
               <g transform={`translate(${cube.x}, ${cube.y})`}>
                 <g class={`toc-tower-orbiter toc-tower-orbit-${cube.orbit}`}>
                   <g transform={`scale(${CUBE_SCALE})`}>
-                    <use href="#toc-iso-block" class="toc-tower-block" style={cube.style} />
+                    <use href={`#toc-cube-${cube.tone}`} class="toc-tower-block" style={`--drop-delay: ${cube.drop}s;`} />
                   </g>
                 </g>
               </g>
@@ -969,7 +1023,7 @@ const TOWER_LOOP_CLASS = {
     }
 
     .toc-tower-lifter {
-      animation: toc-tower-lift 16s ease-in-out var(--loop-delay, 2s) infinite;
+      animation: toc-tower-lift 24s ease-in-out var(--loop-delay, 2s) infinite;
       will-change: transform;
     }
 
@@ -979,27 +1033,29 @@ const TOWER_LOOP_CLASS = {
     }
 
     .toc-tower-orbiter {
+      transform-box: fill-box;
+      transform-origin: 50% 50%;
       will-change: transform;
     }
 
     .toc-tower-orbit-a {
-      animation: toc-orbit-a 18s ease-in-out infinite;
+      animation: toc-orbit-a 24s ease-in-out infinite;
     }
 
     .toc-tower-orbit-b {
-      animation: toc-orbit-b 18s ease-in-out infinite;
+      animation: toc-orbit-b 24s ease-in-out infinite;
     }
 
     .toc-tower-orbit-c {
-      animation: toc-orbit-c 18s ease-in-out infinite;
+      animation: toc-orbit-c 24s ease-in-out infinite;
     }
 
     .toc-tower-orbit-d {
-      animation: toc-orbit-d 18s ease-in-out infinite;
+      animation: toc-orbit-d 24s ease-in-out infinite;
     }
 
     .toc-tower-orbit-e {
-      animation: toc-orbit-e 18s ease-in-out infinite;
+      animation: toc-orbit-e 24s ease-in-out infinite;
     }
 
     .training-toc-kicker {
@@ -1306,77 +1362,62 @@ const TOWER_LOOP_CLASS = {
       }
     }
 
-    /* Carousel stations: A left-mid, B left-top, C top, D right-top,
-       E right-mid; E→A crosses the floor in front at (112, 150). Each
-       cube hops one station forward every 20% of the 18s loop. */
+    /* 24s formation cycle: docked (0-8%) → exploded halo, scaled up for
+       depth (13-30%) → criss-cross flight (30-40%) → pyramid stacked on
+       the crown (40-62%) → staggered cascade back (62-76%) → docked. */
     @keyframes toc-orbit-a {
-      0% { transform: translate(0, 0); }
-      4.5% { transform: translate(4px, -45px); }
-      9%, 20% { transform: translate(8px, -58px); }
-      24.5% { transform: translate(30px, -92px); }
-      29%, 40% { transform: translate(52px, -94px); }
-      44.5% { transform: translate(77px, -88px); }
-      49%, 60% { transform: translate(102px, -50px); }
-      64.5% { transform: translate(101px, -45px); }
-      69%, 80% { transform: translate(100px, -8px); }
-      84.5% { transform: translate(62px, 46px); }
-      89%, 100% { transform: translate(0, 0); }
+      0%, 8% { transform: translate(0, 0) scale(1); }
+      13% { transform: translate(-26px, -20px) scale(1.12); }
+      20% { transform: translate(-31px, -16px) scale(1.12); }
+      28%, 30% { transform: translate(-26px, -20px) scale(1.12); }
+      35% { transform: translate(3px, -63px) scale(1.06); }
+      40%, 62% { transform: translate(32px, -70px) scale(1); }
+      65% { transform: translate(16px, -51px) scale(1.02); }
+      68%, 100% { transform: translate(0, 0) scale(1); }
     }
 
     @keyframes toc-orbit-b {
-      0% { transform: translate(0, 0); }
-      4.5% { transform: translate(22px, -34px); }
-      9%, 20% { transform: translate(44px, -36px); }
-      24.5% { transform: translate(69px, -30px); }
-      29%, 40% { transform: translate(94px, 8px); }
-      44.5% { transform: translate(93px, 13px); }
-      49%, 60% { transform: translate(92px, 50px); }
-      64.5% { transform: translate(54px, 104px); }
-      69%, 80% { transform: translate(-8px, 58px); }
-      84.5% { transform: translate(-4px, 13px); }
-      89%, 100% { transform: translate(0, 0); }
+      0%, 8% { transform: translate(0, 0) scale(1); }
+      13% { transform: translate(-24px, -16px) scale(1.12); }
+      20% { transform: translate(-20px, -22px) scale(1.12); }
+      28%, 30% { transform: translate(-24px, -16px) scale(1.12); }
+      35% { transform: translate(-4px, -14px) scale(1.06); }
+      40%, 64% { transform: translate(16px, 24px) scale(1); }
+      67% { transform: translate(8px, -4px) scale(1.02); }
+      70%, 100% { transform: translate(0, 0) scale(1); }
     }
 
     @keyframes toc-orbit-c {
-      0% { transform: translate(0, 0); }
-      4.5% { transform: translate(25px, 6px); }
-      9%, 20% { transform: translate(50px, 44px); }
-      24.5% { transform: translate(49px, 49px); }
-      29%, 40% { transform: translate(48px, 86px); }
-      44.5% { transform: translate(10px, 140px); }
-      49%, 60% { transform: translate(-52px, 94px); }
-      64.5% { transform: translate(-48px, 49px); }
-      69%, 80% { transform: translate(-44px, 36px); }
-      84.5% { transform: translate(-22px, 2px); }
-      89%, 100% { transform: translate(0, 0); }
+      0%, 8% { transform: translate(0, 0) scale(1); }
+      13% { transform: translate(-22px, -34px) scale(1.12); }
+      20% { transform: translate(-26px, -28px) scale(1.12); }
+      28%, 30% { transform: translate(-22px, -34px) scale(1.12); }
+      35% { transform: translate(10px, -51px) scale(1.06); }
+      40%, 66% { transform: translate(42px, -32px) scale(1); }
+      69% { transform: translate(21px, -32px) scale(1.02); }
+      72%, 100% { transform: translate(0, 0) scale(1); }
     }
 
     @keyframes toc-orbit-d {
-      0% { transform: translate(0, 0); }
-      4.5% { transform: translate(-1px, 5px); }
-      9%, 20% { transform: translate(-2px, 42px); }
-      24.5% { transform: translate(-40px, 96px); }
-      29%, 40% { transform: translate(-102px, 50px); }
-      44.5% { transform: translate(-98px, 5px); }
-      49%, 60% { transform: translate(-94px, -8px); }
-      64.5% { transform: translate(-72px, -42px); }
-      69%, 80% { transform: translate(-50px, -44px); }
-      84.5% { transform: translate(-25px, -38px); }
-      89%, 100% { transform: translate(0, 0); }
+      0%, 8% { transform: translate(0, 0) scale(1); }
+      13% { transform: translate(22px, -28px) scale(1.12); }
+      20% { transform: translate(27px, -33px) scale(1.12); }
+      28%, 30% { transform: translate(22px, -28px) scale(1.12); }
+      35% { transform: translate(-34px, -38px) scale(1.06); }
+      40%, 68% { transform: translate(-90px, -8px) scale(1); }
+      71% { transform: translate(-45px, -20px) scale(1.02); }
+      74%, 100% { transform: translate(0, 0) scale(1); }
     }
 
     @keyframes toc-orbit-e {
-      0% { transform: translate(0, 0); }
-      4.5% { transform: translate(-38px, 54px); }
-      9%, 20% { transform: translate(-100px, 8px); }
-      24.5% { transform: translate(-96px, -37px); }
-      29%, 40% { transform: translate(-92px, -50px); }
-      44.5% { transform: translate(-70px, -84px); }
-      49%, 60% { transform: translate(-48px, -86px); }
-      64.5% { transform: translate(-23px, -80px); }
-      69%, 80% { transform: translate(2px, -42px); }
-      84.5% { transform: translate(1px, -37px); }
-      89%, 100% { transform: translate(0, 0); }
+      0%, 8% { transform: translate(0, 0) scale(1); }
+      13% { transform: translate(30px, -10px) scale(1.12); }
+      20% { transform: translate(35px, -6px) scale(1.12); }
+      28%, 30% { transform: translate(30px, -10px) scale(1.12); }
+      35% { transform: translate(9px, -48px) scale(1.06); }
+      40%, 70% { transform: translate(-12px, -50px) scale(1); }
+      73% { transform: translate(-6px, -41px) scale(1.02); }
+      76%, 100% { transform: translate(0, 0) scale(1); }
     }
 
     @keyframes toc-card-accent-build {

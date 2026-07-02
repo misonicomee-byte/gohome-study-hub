@@ -66,7 +66,8 @@ test("training toc puts a single playful block tower on a flat canvas", () => {
 
   assert.match(tocSection, /class="training-toc-tower"/);
   assert.match(tocSection, /aria-hidden="true"/);
-  assert.match(tocSection, /toc-iso-block/);
+  assert.match(tocSection, /toc-cube-terrazzo/);
+  assert.match(tocSection, /toc-cube-wood/);
   assert.match(tocSection, /toc-tower-base/);
   assert.match(tocSection, /pattern id="toc-terrazzo"/);
   assert.match(tocSection, /pattern id="toc-wood"/);
