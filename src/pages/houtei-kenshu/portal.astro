@@ -4,28 +4,51 @@ import { PASSING_SCORE, QUIZ_DISPLAY_COUNT, trainingModules } from "../../data/h
 
 const rosterRows = Array.from({ length: 12 }, (_, index) => index + 1);
 
-// The single playful object: a hexagonal stone column with bright cubes
-// bursting from the top (the reference's 3D hero object, drawn flat-shaded).
-// Cube geometry is one reusable iso block; light comes from the upper left,
-// so left faces are lighter than right faces (self-shadowing).
+// The single playful object, modelled on the reference hero: a column of
+// stacked hexagonal segments (wood, walnut, terrazzo, yellow, pink-topped
+// crown) with bright cubes docking at its sides. Textures come from SVG
+// patterns; self-shadow from translucent overlays (light from upper left).
+// Transform layers never share a node: position (attribute transform) >
+// loop motion (lifter/docker/floater) > drop-in (toc-tower-block).
+const SEG_H = 24;
+const HEX_TOP_POINTS = "34,0 17,15 -17,15 -34,0 -17,-15 17,-15";
+const HEX_FACES = {
+  left: `-34,0 -17,15 -17,${15 + SEG_H} -34,${SEG_H}`,
+  front: `-17,15 17,15 17,${15 + SEG_H} -17,${15 + SEG_H}`,
+  right: `17,15 34,0 34,${SEG_H} 17,${15 + SEG_H}`,
+};
+// One motion beat per element, staggered across the 16s loop so something
+// is always moving: right-to-left drawer (terrazzo), peg out-in (yellow,
+// mint), bottom-to-top crown lift, left-to-right drawer (yellow band),
+// plus ever-bobbing floaters.
+const tocTowerSegments = [
+  { y: 142, top: "#eedcb8", side: "url(#toc-wood)", drop: 0, base: true },
+  { y: 118, top: "#3b332e", side: "#2b2523", drop: 0.12 },
+  { y: 94, top: "#f3f1ea", side: "url(#toc-terrazzo)", drop: 0.24, loop: "docker", loopStyle: "--loop-delay: 0.9s; --dock-amp: -12px;" },
+  { y: 70, top: "#fff100", side: "#fff100", drop: 0.36, loop: "docker", loopStyle: "--loop-delay: 11.8s; --dock-amp: 14px;" },
+  { y: 46, top: "#ff4fa3", side: "url(#toc-terrazzo)", drop: 0.48, loop: "lifter", loopStyle: "--loop-delay: 6.4s; --lift-amp: -10px;" },
+];
 const TOWER_FACES = {
   yellow: "--ft: #fff100; --fl: #e3d600; --fr: #bfb500;",
   mint: "--ft: #d1ffca; --fl: #b5efaa; --fr: #93dc86;",
   white: "--ft: #ffffff; --fl: #e9ebee; --fr: #d4d7db;",
   magenta: "--ft: #ff4fa3; --fl: #e02f86; --fr: #b8236c;",
 };
-// Every cube hovers forever; amplitudes are in local units, so scaled-down
-// floaters need larger values to stay visibly moving on screen.
 const tocTowerCubes = [
-  { tone: "mint", x: 92, y: 77, scale: 1, drop: 0.15, float: 5.6, amp: -4 },
-  { tone: "yellow", x: 114, y: 85, scale: 1, drop: 0.3, float: 4.8, amp: -5 },
-  { tone: "white", x: 80, y: 95, scale: 0.6, drop: 0.45, float: 5.2, amp: -6, floater: false },
-  { tone: "magenta", x: 128, y: 52, scale: 0.55, drop: 0.6, float: 4.2, amp: -18, floater: true },
-  { tone: "yellow", x: 74, y: 40, scale: 0.5, drop: 0.75, float: 3.6, amp: -20, floater: true },
+  { tone: "mint", x: 50, y: 104, scale: 0.8, drop: 0.55, loop: "docker", loopStyle: "--loop-delay: 9s; --dock-amp: -16px;", behind: true },
+  { tone: "yellow", x: 150, y: 96, scale: 0.9, drop: 0.65, loop: "docker", loopStyle: "--loop-delay: 3.4s; --dock-amp: 16px;" },
+  { tone: "magenta", x: 152, y: 54, scale: 0.55, drop: 0.75, loop: "floater", loopStyle: "--float-duration: 4.2s; --float-amp: -18px; --sway-x: -6px;" },
+  { tone: "yellow", x: 58, y: 46, scale: 0.5, drop: 0.85, loop: "floater", loopStyle: "--float-duration: 3.6s; --float-amp: -20px; --sway-x: 5px;" },
+  { tone: "white", x: 102, y: 10, scale: 0.45, drop: 0.95, loop: "floater", loopStyle: "--float-duration: 4.8s; --float-amp: -16px; --sway-x: -4px;" },
 ].map((cube) => ({
   ...cube,
-  style: `${TOWER_FACES[cube.tone]} --drop-delay: ${cube.drop}s; --float-duration: ${cube.float}s; --float-amp: ${cube.amp}px;`,
+  style: `${TOWER_FACES[cube.tone]} --drop-delay: ${cube.drop}s;`,
 }));
+const TOWER_LOOP_CLASS = {
+  lifter: "toc-tower-lifter",
+  docker: "toc-tower-docker",
+  floater: "toc-tower-floater",
+};
 ---
 
 <Layout
@@ -95,22 +118,49 @@ const tocTowerCubes = [
                 <polygon points="-24,0 0,12 0,32 -24,20" fill="var(--fl)" />
                 <polygon points="24,0 0,12 0,32 24,20" fill="var(--fr)" />
               </g>
+              <pattern id="toc-terrazzo" width="13" height="13" patternUnits="userSpaceOnUse">
+                <rect width="13" height="13" fill="#f3f1ea" />
+                <circle cx="2.5" cy="3" r="0.9" fill="#b9b2a2" />
+                <circle cx="8.5" cy="1.5" r="0.7" fill="#8f887a" />
+                <circle cx="5" cy="9" r="1" fill="#cdc6b6" />
+                <circle cx="11" cy="10" r="0.6" fill="#7c7466" />
+                <circle cx="1" cy="11.4" r="0.5" fill="#a49c8c" />
+                <circle cx="11.6" cy="5.4" r="0.5" fill="#565048" />
+              </pattern>
+              <pattern id="toc-wood" width="16" height="9" patternUnits="userSpaceOnUse">
+                <rect width="16" height="9" fill="#e2c69b" />
+                <path d="M0 2.2 H16 M0 5.4 H16 M0 7.8 H16" stroke="#c6a06b" stroke-width="0.7" fill="none" />
+              </pattern>
             </defs>
-            <g transform="translate(100, 100)">
-              <g class="toc-tower-block toc-tower-base" style="--drop-delay: 0s; --float-amp: 0px;">
-                <polygon points="30,0 15,13 -15,13 -30,0 -15,-13 15,-13" fill="#eef0f2" />
-                <polygon points="-15,13 -30,0 -30,64 -15,77" fill="#d8dbdf" />
-                <polygon points="15,13 -15,13 -15,77 15,77" fill="#c6cacf" />
-                <polygon points="30,0 15,13 15,77 30,64" fill="#b1b5bb" />
+            {tocTowerCubes.filter((cube) => cube.behind).map((cube) => (
+              <g transform={`translate(${cube.x}, ${cube.y}) scale(${cube.scale})`}>
+                <g class={TOWER_LOOP_CLASS[cube.loop]} style={cube.loopStyle}>
+                  <use href="#toc-iso-block" class="toc-tower-block" style={cube.style} />
+                </g>
               </g>
-            </g>
-            {tocTowerCubes.map((cube) => (
-              <g transform={`translate(${cube.x}, ${cube.y})${cube.scale !== 1 ? ` scale(${cube.scale})` : ""}`}>
-                <use
-                  href="#toc-iso-block"
-                  class={`toc-tower-block${cube.floater ? " toc-tower-floater" : ""}`}
-                  style={cube.style}
-                />
+            ))}
+            {tocTowerSegments.map((segment) => (
+              <g transform={`translate(100, ${segment.y})`}>
+                <g class={segment.loop ? TOWER_LOOP_CLASS[segment.loop] : undefined} style={segment.loopStyle}>
+                  <g
+                    class={`toc-tower-block${segment.base ? " toc-tower-base" : ""}`}
+                    style={`--drop-delay: ${segment.drop}s;`}
+                  >
+                    <polygon points={HEX_FACES.left} fill={segment.side} />
+                    <polygon points={HEX_FACES.front} fill={segment.side} />
+                    <polygon points={HEX_FACES.front} fill="rgba(0, 0, 0, 0.1)" />
+                    <polygon points={HEX_FACES.right} fill={segment.side} />
+                    <polygon points={HEX_FACES.right} fill="rgba(0, 0, 0, 0.22)" />
+                    <polygon points={HEX_TOP_POINTS} fill={segment.top} />
+                  </g>
+                </g>
+              </g>
+            ))}
+            {tocTowerCubes.filter((cube) => !cube.behind).map((cube) => (
+              <g transform={`translate(${cube.x}, ${cube.y}) scale(${cube.scale})`}>
+                <g class={TOWER_LOOP_CLASS[cube.loop]} style={cube.loopStyle}>
+                  <use href="#toc-iso-block" class="toc-tower-block" style={cube.style} />
+                </g>
               </g>
             ))}
           </svg>
@@ -914,10 +964,23 @@ const tocTowerCubes = [
     }
 
     .toc-tower-block {
-      animation:
-        toc-tower-drop 0.8s cubic-bezier(0.3, 1.4, 0.5, 1) var(--drop-delay, 0s) both,
-        toc-tower-float var(--float-duration, 5s) ease-in-out calc(var(--drop-delay, 0s) + 0.8s) infinite alternate;
+      animation: toc-tower-drop 0.8s cubic-bezier(0.3, 1.4, 0.5, 1) var(--drop-delay, 0s) both;
       will-change: transform, opacity;
+    }
+
+    .toc-tower-lifter {
+      animation: toc-tower-lift 16s ease-in-out var(--loop-delay, 2s) infinite;
+      will-change: transform;
+    }
+
+    .toc-tower-docker {
+      animation: toc-tower-dock 16s ease-in-out var(--loop-delay, 2s) infinite;
+      will-change: transform;
+    }
+
+    .toc-tower-floater {
+      animation: toc-tower-float var(--float-duration, 4s) ease-in-out infinite alternate;
+      will-change: transform;
     }
 
     .training-toc-kicker {
@@ -1186,13 +1249,51 @@ const tocTowerCubes = [
       }
     }
 
-    @keyframes toc-tower-float {
-      from {
+    @keyframes toc-tower-lift {
+      0%,
+      100% {
         transform: translateY(0);
       }
 
+      5% {
+        transform: translateY(var(--lift-amp, -10px));
+      }
+
+      9% {
+        transform: translateY(calc(var(--lift-amp, -10px) + 3px));
+      }
+
+      14% {
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes toc-tower-dock {
+      0%,
+      100% {
+        transform: translateX(0);
+      }
+
+      5% {
+        transform: translateX(var(--dock-amp, 16px));
+      }
+
+      11% {
+        transform: translateX(var(--dock-amp, 16px));
+      }
+
+      17% {
+        transform: translateX(0);
+      }
+    }
+
+    @keyframes toc-tower-float {
+      from {
+        transform: translate(0, 0);
+      }
+
       to {
-        transform: translateY(var(--float-amp, -4px));
+        transform: translate(var(--sway-x, 0px), var(--float-amp, -6px));
       }
     }
 
@@ -1296,6 +1397,8 @@ const tocTowerCubes = [
 
     @media (prefers-reduced-motion: reduce) {
       .training-toc-tower .toc-tower-block,
+      .training-toc-tower .toc-tower-lifter,
+      .training-toc-tower .toc-tower-docker,
       .training-toc-tower .toc-tower-floater,
       .training-toc-card,
       .training-toc-card__accent,
