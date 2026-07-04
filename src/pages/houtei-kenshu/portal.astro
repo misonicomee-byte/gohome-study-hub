@@ -387,18 +387,11 @@ const TOWER_LOOP_CLASS = {
   <section id="certificate-preview" class="certificate-print mx-auto mb-16 hidden max-w-5xl px-6 py-8 md:px-10 md:py-10">
     <div class="no-print mb-4 flex flex-wrap justify-end gap-3">
       <button
-        id="certificate-preview-print"
+        id="certificate-preview-pdf-action"
         type="button"
         class="rounded-full bg-brand-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
       >
-        印刷
-      </button>
-      <button
-        id="certificate-preview-pdf"
-        type="button"
-        class="rounded-full border border-brand-200 bg-white px-5 py-2 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-50"
-      >
-        PDF保存
+        PDF印刷・保存
       </button>
     </div>
     <div class="certificate-sheet border-4 border-brand-700 bg-white p-8 md:p-12 text-center">
@@ -438,7 +431,7 @@ const TOWER_LOOP_CLASS = {
         <div class="text-sm font-bold tracking-[0.35em] text-brand-600">ATTENDANCE ROSTER</div>
         <h2 class="mt-4 text-3xl md:text-4xl font-bold">受講者名簿</h2>
         <p class="mt-4 text-sm text-brand-600">
-          サーバーには保存されません。印刷またはPDF保存後、各自で記入してください。
+          サーバーには保存されません。PDF印刷・保存後、各自で記入してください。
         </p>
       </div>
 
@@ -489,9 +482,16 @@ const TOWER_LOOP_CLASS = {
     aria-live="polite"
   ></div>
 
+  <script>
+    import { generateCertificatePdfBlob } from "../../scripts/certificatePdfGenerator.mjs";
+
+    window.generateCertificatePdfBlob = generateCertificatePdfBlob;
+  </script>
+
   <script is:inline define:vars={{ trainingModules, quizDisplayCount: QUIZ_DISPLAY_COUNT, passingScore: PASSING_SCORE }}>
     (function () {
       const STORAGE_KEY = "gohome:houtei-kenshu:v2";
+      const COMPLETION_EXPIRY_MONTHS = 6;
       const modules = Array.isArray(trainingModules) ? trainingModules : [];
       const selectedQuizzes = Object.fromEntries(
         modules.map((module) => [module.id, selectQuizzes(module)]),
@@ -510,6 +510,7 @@ const TOWER_LOOP_CLASS = {
         return {
           learner: parsed.learner && typeof parsed.learner === "object" ? parsed.learner : {},
           completed: parsed.completed && typeof parsed.completed === "object" ? parsed.completed : {},
+          completedAt: parsed.completedAt && typeof parsed.completedAt === "object" ? parsed.completedAt : {},
           answers: parsed.answers && typeof parsed.answers === "object" ? parsed.answers : {},
           results: {},
           certificates: parsed.certificates && typeof parsed.certificates === "object" ? parsed.certificates : {},
@@ -518,16 +519,55 @@ const TOWER_LOOP_CLASS = {
       }
 
       let state = loadState();
+      state = expireCompletedModules(state);
+      saveState();
 
       function saveState() {
         const persisted = {
           learner: state.learner,
           completed: state.completed,
+          completedAt: state.completedAt,
           answers: state.answers,
           certificates: state.certificates,
           activeCertificateModuleId: state.activeCertificateModuleId,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+      }
+
+      function expireCompletedModules(state) {
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - COMPLETION_EXPIRY_MONTHS);
+
+        modules.forEach((module) => {
+          const moduleId = module.id;
+          if (state.completed[moduleId] !== true) return;
+
+          const storedCompletedAt = state.completedAt[moduleId] || state.certificates[moduleId]?.issuedAt;
+          if (!storedCompletedAt) {
+            state.completedAt[moduleId] = new Date().toISOString();
+            return;
+          }
+
+          const completedDate = new Date(storedCompletedAt);
+          if (Number.isNaN(completedDate.getTime())) {
+            state.completedAt[moduleId] = new Date().toISOString();
+            return;
+          }
+
+          if (completedDate > sixMonthsAgo) {
+            state.completedAt[moduleId] = completedDate.toISOString();
+            return;
+          }
+
+          state.completed[moduleId] = false;
+          delete state.answers[moduleId];
+          delete state.results[moduleId];
+          delete state.certificates[moduleId];
+          delete state.completedAt[moduleId];
+          if (state.activeCertificateModuleId === moduleId) state.activeCertificateModuleId = null;
+        });
+
+        return state;
       }
 
       function selectQuizzes(module) {
@@ -614,6 +654,7 @@ const TOWER_LOOP_CLASS = {
             state.answers[moduleId][quizId] = input.value;
             delete state.results[moduleId];
             state.completed[moduleId] = false;
+            delete state.completedAt[moduleId];
             delete state.certificates[moduleId];
             if (state.activeCertificateModuleId === moduleId) state.activeCertificateModuleId = null;
             saveState();
@@ -768,6 +809,7 @@ const TOWER_LOOP_CLASS = {
         state.results[moduleId] = { correct, total, answered, completed, percentage, passed };
         if (!passed) {
           state.completed[moduleId] = false;
+          delete state.completedAt[moduleId];
           delete state.certificates[moduleId];
           if (state.activeCertificateModuleId === moduleId) state.activeCertificateModuleId = null;
         }
@@ -800,6 +842,7 @@ const TOWER_LOOP_CLASS = {
           return false;
         }
         state.completed[moduleId] = true;
+        state.completedAt[moduleId] = new Date().toISOString();
         saveState();
         render();
         showToast("受講完了にしました。修了書を作成できます。", "success");
@@ -823,6 +866,8 @@ const TOWER_LOOP_CLASS = {
 
         syncLearnerFromInputs();
 
+        const issuedAt = new Date().toISOString();
+        state.completedAt[moduleId] = state.completedAt[moduleId] || issuedAt;
         state.certificates[moduleId] = {
           moduleId,
           moduleTitle: module.title,
@@ -830,7 +875,7 @@ const TOWER_LOOP_CLASS = {
           category: module.category,
           name: state.learner.name.trim(),
           organization: state.learner.organization?.trim() || "",
-          issuedAt: new Date().toISOString(),
+          issuedAt,
           serial: createSerial(module),
         };
         state.activeCertificateModuleId = moduleId;
@@ -870,6 +915,40 @@ const TOWER_LOOP_CLASS = {
           panelMessage.textContent = `現在表示中: ${certificate.displayNumber} ${certificate.moduleTitle} の修了書・受講者名簿`;
         }
         preview.classList.remove("hidden");
+      }
+
+      async function openCertificatePdf() {
+        const moduleId = state.activeCertificateModuleId;
+        const certificate = moduleId ? state.certificates[moduleId] : null;
+        if (!certificate) {
+          showToast("先に修了書を作成してください。", "warning");
+          return;
+        }
+
+        const pdfWindow = window.open("", "_blank");
+        try {
+          if (typeof window.generateCertificatePdfBlob !== "function") {
+            throw new Error("PDF generator is not ready.");
+          }
+          showToast("A4 2ページのPDFを作成しています。", "success");
+          const blob = await window.generateCertificatePdfBlob(certificate);
+          const url = URL.createObjectURL(blob);
+
+          if (pdfWindow) {
+            pdfWindow.location.href = url;
+          } else {
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = `${certificate.displayNumber || "certificate"}-${certificate.moduleTitle || "training"}.pdf`;
+            anchor.click();
+          }
+
+          window.setTimeout(() => URL.revokeObjectURL(url), 120000);
+        } catch (error) {
+          if (pdfWindow && !pdfWindow.closed) pdfWindow.close();
+          console.error(error);
+          showToast("PDFの作成に失敗しました。時間をおいて再度お試しください。", "warning");
+        }
       }
 
       function syncLearnerFromInputs() {
@@ -948,11 +1027,8 @@ const TOWER_LOOP_CLASS = {
         });
       });
 
-      ["certificate-preview-print", "certificate-preview-pdf"].forEach((id) => {
-        const button = document.getElementById(id);
-        if (!button) return;
-        button.addEventListener("click", () => window.print());
-      });
+      const certificatePdfButton = document.getElementById("certificate-preview-pdf-action");
+      certificatePdfButton?.addEventListener("click", () => openCertificatePdf());
 
       document.querySelectorAll("[data-module-video]").forEach((video) => {
         video.addEventListener("ended", () => {
@@ -1597,26 +1673,40 @@ const TOWER_LOOP_CLASS = {
             width: 100% !important;
           }
 
+          .certificate-sheet,
+          .certificate-roster {
+            border: 0 !important;
+            box-shadow: inset 0 0 0 4px #14532d !important;
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+
           .certificate-sheet {
             box-sizing: border-box;
             display: flex !important;
             flex-direction: column;
             justify-content: center;
-            height: 297mm;
-            min-height: 297mm;
+            height: 288mm;
+            min-height: 288mm;
+            max-height: 288mm;
             overflow: hidden;
-            padding: 18mm 16mm !important;
+            padding: 0mm 16mm 0mm !important;
           }
 
           .certificate-roster {
             box-sizing: border-box;
+            display: flex !important;
+            flex-direction: column;
             break-before: page;
             page-break-before: always;
-            height: 297mm;
-            min-height: 297mm;
+            height: 288mm;
+            min-height: 288mm;
+            max-height: 288mm;
+            break-after: avoid;
+            page-break-after: avoid;
             overflow: hidden;
             margin-top: 0 !important;
-            padding: 16mm 14mm !important;
+            padding: 8mm 16mm 0mm !important;
           }
 
           .certificate-print h2 {
@@ -1641,11 +1731,48 @@ const TOWER_LOOP_CLASS = {
 
           .certificate-roster table {
             font-size: 13px !important;
+            height: 100% !important;
+          }
+
+          #certificate-roster > .overflow-hidden {
+            flex: 1 1 auto;
+            display: flex !important;
+            min-height: 0;
+          }
+
+          #certificate-roster table {
+            height: 100% !important;
           }
 
           .certificate-roster th,
           .certificate-roster td {
-            padding: 11px 9px !important;
+            padding: 9px 10px !important;
+          }
+
+          @supports (-webkit-touch-callout: none) {
+            .certificate-sheet,
+            .certificate-roster {
+              height: 220mm;
+              min-height: 220mm;
+              max-height: 220mm;
+            }
+
+            .certificate-sheet {
+              padding: 0mm 12mm 0mm !important;
+            }
+
+            .certificate-roster {
+              padding: 2mm 12mm 0mm !important;
+            }
+
+            .certificate-roster table {
+              font-size: 12px !important;
+            }
+
+            .certificate-roster th,
+            .certificate-roster td {
+              padding: 6px 8px !important;
+            }
           }
         }
       </style>

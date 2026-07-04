@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const portalSource = readFileSync(new URL("../src/pages/houtei-kenshu/portal.astro", import.meta.url), "utf8");
+const installFabSource = readFileSync(new URL("../src/components/InstallFAB.astro", import.meta.url), "utf8");
 
 test("portal learner fields collect only name and organization", () => {
   assert.match(portalSource, /受講者名/);
@@ -17,13 +18,13 @@ test("portal certificate creation does not require learner name", () => {
   assert.doesNotMatch(portalSource, /state\.learner\.name\?\.trim\(\)/);
 });
 
-test("certificate preview includes print and pdf controls at the jump target", () => {
+test("certificate preview includes one fixed PDF print/save control at the jump target", () => {
   const previewSection = portalSource.match(/<section id="certificate-preview"[\s\S]*?<\/section>/)?.[0] || "";
 
-  assert.match(previewSection, /id="certificate-preview-print"/);
-  assert.match(previewSection, />\s*印刷\s*</);
-  assert.match(previewSection, /id="certificate-preview-pdf"/);
-  assert.match(previewSection, />\s*PDF保存\s*</);
+  assert.match(previewSection, /id="certificate-preview-pdf-action"/);
+  assert.match(previewSection, />\s*PDF印刷・保存\s*</);
+  assert.doesNotMatch(previewSection, /id="certificate-preview-print"/);
+  assert.doesNotMatch(previewSection, /id="certificate-preview-pdf"/);
 });
 
 test("certificate preview includes a simple attendee roster as the second sheet", () => {
@@ -125,7 +126,52 @@ test("print stylesheet outputs the certificate without browser page margins", ()
   assert.match(portalSource, /body\s*{[\s\S]*margin:\s*0 !important;/);
   assert.match(portalSource, /\.certificate-print\s*{[\s\S]*display:\s*block !important;[\s\S]*padding:\s*0 !important;/);
   assert.match(portalSource, /break-after:\s*avoid;/);
-  assert.doesNotMatch(portalSource, /height:\s*260mm;/);
-  assert.match(portalSource, /\.certificate-sheet\s*{[\s\S]*height:\s*297mm;[\s\S]*padding:\s*18mm 16mm !important;/);
-  assert.match(portalSource, /\.certificate-roster\s*{[\s\S]*break-before:\s*page;[\s\S]*page-break-before:\s*always;[\s\S]*height:\s*297mm;[\s\S]*padding:\s*16mm 14mm !important;/);
+  assert.match(portalSource, /\.certificate-sheet\s*{[\s\S]*height:\s*288mm;[\s\S]*min-height:\s*288mm;[\s\S]*max-height:\s*288mm;[\s\S]*padding:\s*0mm 16mm 0mm !important;/);
+  assert.match(portalSource, /\.certificate-roster\s*{[\s\S]*display:\s*flex !important;[\s\S]*flex-direction:\s*column;[\s\S]*break-before:\s*page;[\s\S]*page-break-before:\s*always;[\s\S]*height:\s*288mm;[\s\S]*min-height:\s*288mm;[\s\S]*max-height:\s*288mm;[\s\S]*break-after:\s*avoid;[\s\S]*padding:\s*8mm 16mm 0mm !important;/);
+  assert.match(portalSource, /\.certificate-sheet,\s*[\r\n]+\s*\.certificate-roster\s*{[\s\S]*border:\s*0 !important;[\s\S]*box-shadow:\s*inset 0 0 0 4px #14532d !important;/);
+  assert.doesNotMatch(portalSource, /height:\s*260mm;\s*\n\s*min-height:\s*260mm;/);
+  assert.match(portalSource, /#certificate-roster > \.overflow-hidden\s*{[\s\S]*flex:\s*1 1 auto;[\s\S]*display:\s*flex !important;/);
+  assert.match(portalSource, /#certificate-roster table\s*{[\s\S]*height:\s*100% !important;/);
+  assert.doesNotMatch(portalSource, /#certificate-roster tbody tr\s*{[\s\S]*height:\s*\d/);
+  assert.match(portalSource, /\.certificate-roster th,\s*[\r\n]+\s*\.certificate-roster td\s*{[\s\S]*padding:\s*9px 10px !important;/);
+});
+
+test("print stylesheet has an iOS Safari fallback that fits two A4 pages", () => {
+  const iosPrintFallback = portalSource.match(/@supports \(-webkit-touch-callout: none\) \{[\s\S]*?\n          \}/)?.[0] || "";
+
+  assert.match(iosPrintFallback, /\.certificate-sheet,\s*[\r\n]+\s*\.certificate-roster\s*{[\s\S]*height:\s*220mm;[\s\S]*min-height:\s*220mm;[\s\S]*max-height:\s*220mm;/);
+  assert.match(iosPrintFallback, /\.certificate-sheet\s*{[\s\S]*padding:\s*0mm 12mm 0mm !important;/);
+  assert.match(iosPrintFallback, /\.certificate-roster\s*{[\s\S]*padding:\s*2mm 12mm 0mm !important;/);
+  assert.match(iosPrintFallback, /\.certificate-roster th,\s*[\r\n]+\s*\.certificate-roster td\s*{[\s\S]*padding:\s*6px 8px !important;/);
+});
+
+test("certificate controls use the same fixed two-page PDF generator", () => {
+  assert.match(portalSource, /generateCertificatePdfBlob/);
+  assert.match(portalSource, /async function openCertificatePdf\(\)/);
+  assert.match(portalSource, /const pdfWindow = window\.open\("", "_blank"\);/);
+  assert.match(portalSource, /document\.getElementById\("certificate-preview-pdf-action"\)/);
+  assert.match(portalSource, /addEventListener\("click", \(\) => openCertificatePdf\(\)\);/);
+  assert.doesNotMatch(portalSource, /\["certificate-preview-print", "certificate-preview-pdf"\]\.forEach/);
+  assert.doesNotMatch(portalSource, /function isIOSPrintEnvironment\(\)/);
+  assert.doesNotMatch(portalSource, /function showIOSPrintGuidance\(\)/);
+  assert.doesNotMatch(portalSource, /Safariの共有ボタンから印刷またはPDF保存/);
+  assert.doesNotMatch(portalSource, /button\.addEventListener\("click", \(\) => window\.print\(\)\);/);
+});
+
+test("home screen install prompt is excluded from printed certificates", () => {
+  assert.match(installFabSource, /id="install-fab"[\s\S]*class="[^"]*\bno-print\b/);
+  assert.match(installFabSource, /id="ios-install-modal"[\s\S]*class="[^"]*\bno-print\b/);
+  assert.match(portalSource, /header,\s*[\r\n]+\s*footer,\s*[\r\n]+\s*\.no-print,/);
+});
+
+test("completed modules expire after six months and reset quiz state", () => {
+  assert.match(portalSource, /const COMPLETION_EXPIRY_MONTHS = 6;/);
+  assert.match(portalSource, /completedAt: parsed\.completedAt && typeof parsed\.completedAt === "object" \? parsed\.completedAt : {}/);
+  assert.match(portalSource, /state = expireCompletedModules\(state\);/);
+  assert.match(portalSource, /sixMonthsAgo\.setMonth\(sixMonthsAgo\.getMonth\(\) - COMPLETION_EXPIRY_MONTHS\);/);
+  assert.match(portalSource, /state\.completedAt\[moduleId\] = new Date\(\)\.toISOString\(\);/);
+  assert.match(portalSource, /delete state\.answers\[moduleId\];/);
+  assert.match(portalSource, /delete state\.results\[moduleId\];/);
+  assert.match(portalSource, /delete state\.certificates\[moduleId\];/);
+  assert.match(portalSource, /delete state\.completedAt\[moduleId\];/);
 });

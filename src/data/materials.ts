@@ -92,6 +92,14 @@ export const MATERIALS: Material[] = [
 
   // ===== ご家族向け =====
   {
+    slug: "clinic-brochure",
+    title: "診療パンフレット",
+    description: "訪問診療の概要、診療体制、対象エリアなどをまとめた診療案内パンフレット。",
+    filename: "clinic-brochure.pdf",
+    category: "ご家族向け",
+    audience: "patient",
+  },
+  {
     slug: "family-guide",
     title: "ご家族向け説明資料",
     description: "ご家族に訪問診療をご理解いただくための説明資料。",
