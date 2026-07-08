@@ -357,7 +357,7 @@ async function maybeAppendGoogleSheetsReport(data) {
 
   const credentials = parseServiceAccount(rawCredentials);
   const accessToken = await getGoogleAccessToken(credentials);
-  const sheets = new SheetsClient({ spreadsheetId, accessToken });
+  const sheets = createSheetsClient({ spreadsheetId, accessToken });
   const groups = buildSheetRowGroups(data);
 
   for (const group of groups) {
@@ -516,19 +516,14 @@ function base64Url(value) {
   return buffer.toString("base64url");
 }
 
-class SheetsClient {
-  constructor({ spreadsheetId, accessToken }) {
-    this.spreadsheetId = spreadsheetId;
-    this.accessToken = accessToken;
-  }
-
-  async ensureSheet(sheetName) {
-    const spreadsheet = await this.request("", {
+function createSheetsClient({ spreadsheetId, accessToken }) {
+  async function ensureSheet(sheetName) {
+    const spreadsheet = await request("", {
       query: new URLSearchParams({ fields: "sheets.properties.title" }),
     });
     const titles = (spreadsheet.sheets || []).map((sheet) => sheet.properties?.title);
     if (titles.includes(sheetName)) return;
-    await this.request(":batchUpdate", {
+    await request(":batchUpdate", {
       method: "POST",
       body: {
         requests: [
@@ -545,15 +540,15 @@ class SheetsClient {
     });
   }
 
-  async ensureHeaders(sheetName, headers) {
-    const current = await this.getValues(`${quoteSheetName(sheetName)}!1:1`);
+  async function ensureHeaders(sheetName, headers) {
+    const current = await getValues(`${quoteSheetName(sheetName)}!1:1`);
     const firstRow = current.values?.[0] || [];
     if (headersEqual(firstRow, headers)) return;
-    await this.updateValues(`${quoteSheetName(sheetName)}!A1`, [headers]);
+    await updateValues(`${quoteSheetName(sheetName)}!A1`, [headers]);
   }
 
-  async appendRows(sheetName, rows) {
-    await this.valuesRequest(`${quoteSheetName(sheetName)}!A1:Z`, ":append", {
+  async function appendRows(sheetName, rows) {
+    await valuesRequest(`${quoteSheetName(sheetName)}!A1:Z`, ":append", {
       method: "POST",
       query: new URLSearchParams({
         valueInputOption: "USER_ENTERED",
@@ -563,35 +558,35 @@ class SheetsClient {
     });
   }
 
-  async getValues(range) {
-    return this.valuesRequest(range, "", { method: "GET" });
+  async function getValues(range) {
+    return valuesRequest(range, "", { method: "GET" });
   }
 
-  async updateValues(range, values) {
-    return this.valuesRequest(range, "", {
+  async function updateValues(range, values) {
+    return valuesRequest(range, "", {
       method: "PUT",
       query: new URLSearchParams({ valueInputOption: "USER_ENTERED" }),
       body: { values },
     });
   }
 
-  async valuesRequest(range, suffix, options = {}) {
-    return this.rawRequest(
-      `/${this.spreadsheetId}/values/${encodeURIComponent(range)}${suffix}`,
+  async function valuesRequest(range, suffix, options = {}) {
+    return rawRequest(
+      `/${spreadsheetId}/values/${encodeURIComponent(range)}${suffix}`,
       options,
     );
   }
 
-  async request(suffix, options = {}) {
-    return this.rawRequest(`/${this.spreadsheetId}${suffix}`, options);
+  async function request(suffix, options = {}) {
+    return rawRequest(`/${spreadsheetId}${suffix}`, options);
   }
 
-  async rawRequest(path, options = {}) {
+  async function rawRequest(path, options = {}) {
     const query = options.query ? `?${options.query.toString()}` : "";
     const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets${path}${query}`, {
       method: options.method || "GET",
       headers: {
-        Authorization: `Bearer ${this.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
@@ -602,6 +597,12 @@ class SheetsClient {
     }
     return json;
   }
+
+  return {
+    ensureSheet,
+    ensureHeaders,
+    appendRows,
+  };
 }
 
 function quoteSheetName(sheetName) {
