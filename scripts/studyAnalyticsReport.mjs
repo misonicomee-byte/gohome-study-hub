@@ -6,6 +6,7 @@ const DATABASE_NAME = process.env.ANALYTICS_DATABASE_NAME || "gohome-study-analy
 const DATABASE_ID = process.env.ANALYTICS_DATABASE_ID || "5a97458f-7a20-416b-b2f6-968595da0f4f";
 const DEFAULT_BLOG_PERFORMANCE_SPREADSHEET_ID = "1mPg_kiLfHtGBwnvE9DERfdZB_4cRYRuIGcySoTQQuVY";
 const REPORT_URL = process.env.ANALYTICS_REPORT_URL || "https://study.gohome-clinic.com/api/analytics/report";
+const ANALYTICS_DASHBOARD_URL = "https://study.gohome-clinic.com/data/";
 const days = normalizeDays(process.env.REPORT_DAYS);
 const recordedAt = nowJstIso();
 const reportEndDate = formatJstDate(new Date());
@@ -297,8 +298,9 @@ function renderChatwork(data) {
   });
 
   return [
-    "[info][title]studyサイト行動分析レポート[/title]",
+    "[info][title]情報資料室サイト行動分析レポート[/title]",
     `対象期間: 過去${days}日`,
+    `情報資料室サイト分析Webアプリ: ${ANALYTICS_DASHBOARD_URL}`,
     "",
     "クリック上位",
     clickLines.length ? clickLines.join("\n") : "データなし",
