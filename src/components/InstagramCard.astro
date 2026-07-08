@@ -13,13 +13,26 @@ const engRate = post.reach > 0
   : null;
 ---
 
-<article class="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl border border-brand-100 relative">
+<article
+  class="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl border border-brand-100 relative"
+  data-content-type="instagram"
+  data-content-id={post.id}
+  data-content-title={caption}
+>
   {rank !== undefined && (
     <div class="absolute top-3 left-3 z-10 w-9 h-9 rounded-full bg-gradient-to-br from-fuchsia-500 to-orange-400 text-white grid place-items-center font-bold shadow-lg">
       {rank}
     </div>
   )}
-  <a href={post.permalink} target="_blank" rel="noopener" class="block">
+  <a
+    href={post.permalink}
+    target="_blank"
+    rel="noopener"
+    class="block"
+    data-content-type="instagram"
+    data-content-id={post.id}
+    data-content-title={caption}
+  >
     <div class="relative aspect-square overflow-hidden bg-brand-100">
       <img
         src={post.thumbnail_url || post.media_url}

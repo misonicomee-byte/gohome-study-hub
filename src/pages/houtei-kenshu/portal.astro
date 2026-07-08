@@ -232,6 +232,9 @@ const TOWER_LOOP_CLASS = {
               href={`#module-${item.id}`}
               data-toc-card
               data-module-id={item.id}
+              data-content-type="legal_training_toc"
+              data-content-id={item.id}
+              data-content-title={item.title}
               data-status-tone="pending"
               class="training-toc-card"
             >
@@ -270,6 +273,9 @@ const TOWER_LOOP_CLASS = {
           id={`module-${item.id}`}
           data-module-card
           data-module-id={item.id}
+          data-content-type="legal_training_video"
+          data-content-id={item.id}
+          data-content-title={item.title}
           class="scroll-mt-6 rounded-xl border border-brand-100 bg-white p-5 md:p-6 shadow-sm"
         >
           <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -302,6 +308,9 @@ const TOWER_LOOP_CLASS = {
               preload="metadata"
               data-module-video
               data-module-id={item.id}
+              data-content-type="legal_training_video"
+              data-content-id={item.id}
+              data-content-title={item.title}
               src={`/api/houtei-kenshu/video/${item.slug}`}
               class="aspect-video w-full bg-black"
             >
@@ -343,6 +352,9 @@ const TOWER_LOOP_CLASS = {
                 type="button"
                 data-grade-quiz
                 data-module-id={item.id}
+                data-content-type="legal_training_video"
+                data-content-id={item.id}
+                data-content-title={item.title}
                 class="rounded-full bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
               >
                 採点する
@@ -351,6 +363,9 @@ const TOWER_LOOP_CLASS = {
                 type="button"
                 data-complete-module
                 data-module-id={item.id}
+                data-content-type="legal_training_video"
+                data-content-id={item.id}
+                data-content-title={item.title}
                 class="rounded-full border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-50"
               >
                 受講完了にする
@@ -359,6 +374,9 @@ const TOWER_LOOP_CLASS = {
                 type="button"
                 data-create-certificate
                 data-module-id={item.id}
+                data-content-type="legal_training_video"
+                data-content-id={item.id}
+                data-content-title={item.title}
                 class="rounded-full border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-50"
               >
                 修了書を作成

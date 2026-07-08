@@ -1,0 +1,41 @@
+name: studyサイト行動分析レポート
+
+on:
+  schedule:
+    # 毎月2日 07:10 JST に前月相当の直近30日を集計
+    - cron: '10 22 1 * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 集計対象日数
+        required: false
+        default: '30'
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate report
+        run: node scripts/studyAnalyticsReport.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CHATWORK_API_TOKEN: ${{ secrets.CHATWORK_API_TOKEN }}
+          CHATWORK_NOTIFY_ROOM_ID: ${{ secrets.CHATWORK_NOTIFY_ROOM_ID }}
+          REPORT_DAYS: ${{ inputs.days || '30' }}

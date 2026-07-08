@@ -35,6 +35,31 @@ https://study.gohome-clinic.com/api/auth/line/callback
 
 ローカルでFunctions込みの挙動を確認する場合は、同じ値を `.dev.vars` に入れて `npx wrangler pages dev dist` で確認します。
 
+## studyサイト行動分析
+
+Cloudflare D1 `gohome-study-analytics` に、サイト内クリックと法定研修動画の再生イベントを匿名で保存します。
+
+保存する主なイベント:
+
+- `content_click` — 講義、レジュメ、本院ブログ、Instagram、Podcast、LINE、法定研修入口などのクリック
+- `video_play` / `video_progress` / `video_pause` / `video_complete` — 法定研修動画の再生、25/50/75/95%到達、停止、完了
+- `quiz_grade` / `module_complete` / `certificate_create` — 小テスト採点、受講完了、修了書作成
+
+個人情報保護のため、LINEプロフィール、受講者名、所属、IPアドレス、User-Agentは保存しません。保存する識別子はブラウザ内で生成する匿名の visitor/session ID のみです。
+
+初回またはスキーマ更新時はD1 migrationを適用します。
+
+```bash
+npx wrangler d1 migrations apply gohome-study-analytics --remote
+```
+
+月次レポートは `.github/workflows/study_analytics_report.yml` が毎月2日 07:10 JST に実行し、GitHub Actions の Job Summary に出力します。Chatwork通知も行う場合は、GitHub Secrets に次を追加してください。
+
+```text
+CHATWORK_API_TOKEN=通知に使うChatwork API Token
+CHATWORK_NOTIFY_ROOM_ID=通知先ルームID
+```
+
 ## 動画の追加方法
 
 `src/data/lectures.ts` の `LECTURES` 配列に1エントリ追加するだけ：

@@ -7,8 +7,18 @@ pages_build_output_dir = "./dist"
 binding = "TRAINING_VIDEOS"
 bucket_name = "gohome-houtei-kenshu-videos"
 
+[[d1_databases]]
+binding = "ANALYTICS_DB"
+database_name = "gohome-study-analytics"
+database_id = "5a97458f-7a20-416b-b2f6-968595da0f4f"
+
 [env.production]
 
 [[env.production.r2_buckets]]
 binding = "TRAINING_VIDEOS"
 bucket_name = "gohome-houtei-kenshu-videos"
+
+[[env.production.d1_databases]]
+binding = "ANALYTICS_DB"
+database_name = "gohome-study-analytics"
+database_id = "5a97458f-7a20-416b-b2f6-968595da0f4f"
