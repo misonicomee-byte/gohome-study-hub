@@ -1,0 +1,364 @@
+---
+import "../styles/global.css";
+
+const title = "studyサイト分析";
+---
+
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <title>{title}｜ごうホームクリニック</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+  </head>
+  <body class="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased">
+    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <header class="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-5 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-wider text-emerald-700">Protected Analytics</p>
+          <h1 class="mt-1 text-2xl font-bold tracking-normal text-slate-950 md:text-3xl">studyサイト分析</h1>
+          <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+            study.gohome-clinic.com のクリック、法定研修動画、完了アクションをD1から集計します。
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="text-sm font-semibold text-slate-700" for="daysSelect">期間</label>
+          <select
+            id="daysSelect"
+            class="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+          >
+            <option value="7">7日</option>
+            <option value="30" selected>30日</option>
+            <option value="90">90日</option>
+            <option value="180">180日</option>
+            <option value="365">365日</option>
+          </select>
+          <button
+            id="reloadButton"
+            type="button"
+            class="inline-flex h-10 items-center gap-2 rounded-md bg-emerald-700 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-800"
+          >
+            更新
+          </button>
+        </div>
+      </header>
+
+      <section id="statusBox" class="mb-5 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
+        読み込み中...
+      </section>
+
+      <section class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-6" aria-label="概要指標">
+        <article class="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-xs font-bold uppercase tracking-wide text-slate-500">イベント</div>
+          <div id="metricTotalEvents" class="mt-2 text-2xl font-bold text-slate-950">-</div>
+        </article>
+        <article class="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-xs font-bold uppercase tracking-wide text-slate-500">訪問者</div>
+          <div id="metricVisitors" class="mt-2 text-2xl font-bold text-slate-950">-</div>
+        </article>
+        <article class="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-xs font-bold uppercase tracking-wide text-slate-500">クリック</div>
+          <div id="metricClicks" class="mt-2 text-2xl font-bold text-slate-950">-</div>
+        </article>
+        <article class="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-xs font-bold uppercase tracking-wide text-slate-500">動画再生</div>
+          <div id="metricVideoPlays" class="mt-2 text-2xl font-bold text-slate-950">-</div>
+        </article>
+        <article class="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-xs font-bold uppercase tracking-wide text-slate-500">動画完了</div>
+          <div id="metricVideoCompletes" class="mt-2 text-2xl font-bold text-slate-950">-</div>
+        </article>
+        <article class="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="text-xs font-bold uppercase tracking-wide text-slate-500">研修アクション</div>
+          <div id="metricTrainingActions" class="mt-2 text-2xl font-bold text-slate-950">-</div>
+        </article>
+      </section>
+
+      <section class="mb-6 grid gap-4 lg:grid-cols-2">
+        <article class="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-base font-bold text-slate-950">日別推移</h2>
+            <span class="text-xs text-slate-500">クリック / 動画再生 / 完了</span>
+          </div>
+          <div class="relative h-72">
+            <canvas id="dailyTrendChart"></canvas>
+          </div>
+        </article>
+        <article class="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-base font-bold text-slate-950">イベント内訳</h2>
+            <span class="text-xs text-slate-500">期間内のイベント件数</span>
+          </div>
+          <div class="relative h-72">
+            <canvas id="eventTotalsChart"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <article class="rounded-md border border-slate-200 bg-white shadow-sm">
+          <div class="border-b border-slate-200 px-4 py-3">
+            <h2 class="text-base font-bold text-slate-950">クリック上位コンテンツ</h2>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200 text-sm">
+              <thead class="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th class="px-4 py-3">種別</th>
+                  <th class="px-4 py-3">タイトル</th>
+                  <th class="px-4 py-3 text-right">クリック</th>
+                  <th class="px-4 py-3 text-right">訪問者</th>
+                </tr>
+              </thead>
+              <tbody id="topClicksBody" class="divide-y divide-slate-100 bg-white"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="rounded-md border border-slate-200 bg-white shadow-sm">
+          <div class="border-b border-slate-200 px-4 py-3">
+            <h2 class="text-base font-bold text-slate-950">法定研修動画</h2>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200 text-sm">
+              <thead class="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th class="px-4 py-3">研修名</th>
+                  <th class="px-4 py-3 text-right">再生</th>
+                  <th class="px-4 py-3 text-right">75%</th>
+                  <th class="px-4 py-3 text-right">完了</th>
+                  <th class="px-4 py-3 text-right">完了率</th>
+                </tr>
+              </thead>
+              <tbody id="videoStatsBody" class="divide-y divide-slate-100 bg-white"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="rounded-md border border-slate-200 bg-white shadow-sm">
+        <div class="border-b border-slate-200 px-4 py-3">
+          <h2 class="text-base font-bold text-slate-950">法定研修アクション</h2>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th class="px-4 py-3">イベント</th>
+                <th class="px-4 py-3">研修名</th>
+                <th class="px-4 py-3 text-right">件数</th>
+                <th class="px-4 py-3 text-right">訪問者</th>
+              </tr>
+            </thead>
+            <tbody id="trainingActionsBody" class="divide-y divide-slate-100 bg-white"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script is:inline>
+      const charts = {};
+      const numberFormat = new Intl.NumberFormat("ja-JP");
+
+      const labels = {
+        content_click: "クリック",
+        video_play: "動画再生",
+        video_pause: "動画停止",
+        video_progress: "動画進捗",
+        video_complete: "動画完了",
+        quiz_grade: "採点",
+        module_complete: "研修完了",
+        certificate_create: "修了証作成",
+      };
+
+      const $ = (id) => document.getElementById(id);
+      const n = (value) => numberFormat.format(Number(value || 0));
+      const pct = (num, den) => {
+        const d = Number(den || 0);
+        if (d <= 0) return "-";
+        return `${Math.round((Number(num || 0) / d) * 1000) / 10}%`;
+      };
+      const text = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+
+      function setStatus(message, tone = "neutral") {
+        const box = $("statusBox");
+        box.textContent = message;
+        box.className =
+          "mb-5 rounded-md border px-4 py-3 text-sm shadow-sm " +
+          (tone === "error"
+            ? "border-red-200 bg-red-50 text-red-700"
+            : "border-slate-200 bg-white text-slate-600");
+      }
+
+      function setMetric(id, value) {
+        const node = $(id);
+        if (node) node.textContent = n(value);
+      }
+
+      function rowOrEmpty(rows, colspan, render) {
+        if (!rows || rows.length === 0) {
+          return `<tr><td colspan="${colspan}" class="px-4 py-6 text-center text-slate-500">データなし</td></tr>`;
+        }
+        return rows.map(render).join("");
+      }
+
+      function escapeHtml(value) {
+        return text(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function renderTables(data) {
+        $("topClicksBody").innerHTML = rowOrEmpty(data.topClicks, 4, (row) => `
+          <tr class="hover:bg-slate-50">
+            <td class="px-4 py-3 text-slate-600">${escapeHtml(row.content_type)}</td>
+            <td class="max-w-sm px-4 py-3 font-semibold text-slate-900">
+              <div class="truncate" title="${escapeHtml(row.content_title || row.content_id)}">${escapeHtml(row.content_title || row.content_id || "-")}</div>
+            </td>
+            <td class="px-4 py-3 text-right font-bold text-slate-900">${n(row.clicks)}</td>
+            <td class="px-4 py-3 text-right text-slate-600">${n(row.visitors)}</td>
+          </tr>
+        `);
+
+        $("videoStatsBody").innerHTML = rowOrEmpty(data.videoStats, 5, (row) => `
+          <tr class="hover:bg-slate-50">
+            <td class="max-w-sm px-4 py-3 font-semibold text-slate-900">
+              <div class="truncate" title="${escapeHtml(row.content_title || row.content_id)}">${escapeHtml(row.content_title || row.content_id || "-")}</div>
+            </td>
+            <td class="px-4 py-3 text-right font-bold text-slate-900">${n(row.plays)}</td>
+            <td class="px-4 py-3 text-right text-slate-600">${n(row.p75)}</td>
+            <td class="px-4 py-3 text-right text-slate-600">${n(row.completes)}</td>
+            <td class="px-4 py-3 text-right text-slate-600">${pct(row.completes, row.plays)}</td>
+          </tr>
+        `);
+
+        $("trainingActionsBody").innerHTML = rowOrEmpty(data.trainingActions, 4, (row) => `
+          <tr class="hover:bg-slate-50">
+            <td class="px-4 py-3 text-slate-600">${escapeHtml(labels[row.event_name] || row.event_name)}</td>
+            <td class="max-w-lg px-4 py-3 font-semibold text-slate-900">
+              <div class="truncate" title="${escapeHtml(row.content_title || row.content_id)}">${escapeHtml(row.content_title || row.content_id || "-")}</div>
+            </td>
+            <td class="px-4 py-3 text-right font-bold text-slate-900">${n(row.events)}</td>
+            <td class="px-4 py-3 text-right text-slate-600">${n(row.visitors)}</td>
+          </tr>
+        `);
+      }
+
+      function destroyChart(id) {
+        if (charts[id]) {
+          charts[id].destroy();
+          delete charts[id];
+        }
+      }
+
+      function renderCharts(data) {
+        const daily = data.daily || [];
+        destroyChart("dailyTrendChart");
+        charts.dailyTrendChart = new Chart($("dailyTrendChart"), {
+          type: "line",
+          data: {
+            labels: daily.map((row) => row.date),
+            datasets: [
+              {
+                label: "クリック",
+                data: daily.map((row) => Number(row.clicks || 0)),
+                borderColor: "#047857",
+                backgroundColor: "rgba(4,120,87,0.12)",
+                tension: 0.25,
+              },
+              {
+                label: "動画再生",
+                data: daily.map((row) => Number(row.video_plays || 0)),
+                borderColor: "#2563eb",
+                backgroundColor: "rgba(37,99,235,0.12)",
+                tension: 0.25,
+              },
+              {
+                label: "動画完了",
+                data: daily.map((row) => Number(row.video_completes || 0)),
+                borderColor: "#f59e0b",
+                backgroundColor: "rgba(245,158,11,0.12)",
+                tension: 0.25,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+          },
+        });
+
+        const totals = data.eventTotals || [];
+        destroyChart("eventTotalsChart");
+        charts.eventTotalsChart = new Chart($("eventTotalsChart"), {
+          type: "bar",
+          data: {
+            labels: totals.map((row) => labels[row.event_name] || row.event_name),
+            datasets: [
+              {
+                label: "件数",
+                data: totals.map((row) => Number(row.events || 0)),
+                backgroundColor: "#0f766e",
+                borderRadius: 4,
+              },
+            ],
+          },
+          options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+          },
+        });
+      }
+
+      async function loadData() {
+        const days = $("daysSelect").value || "30";
+        setStatus(`過去${days}日を読み込み中...`);
+        const response = await fetch(`/api/analytics/dashboard?days=${encodeURIComponent(days)}`, {
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        });
+        const json = await response.json().catch(() => null);
+        if (!response.ok || !json || json.ok !== true) {
+          throw new Error(json?.error || `HTTP ${response.status}`);
+        }
+
+        const summary = json.data.summary || {};
+        setMetric("metricTotalEvents", summary.total_events);
+        setMetric("metricVisitors", summary.visitors);
+        setMetric("metricClicks", summary.clicks);
+        setMetric("metricVideoPlays", summary.video_plays);
+        setMetric("metricVideoCompletes", summary.video_completes);
+        setMetric("metricTrainingActions", summary.training_actions);
+        renderTables(json.data);
+        renderCharts(json.data);
+
+        const generated = new Date(json.generated_at);
+        const generatedText = Number.isNaN(generated.getTime())
+          ? json.generated_at
+          : generated.toLocaleString("ja-JP");
+        setStatus(`表示中: 過去${json.days}日 / 更新時刻 ${generatedText}`);
+      }
+
+      $("reloadButton").addEventListener("click", () => {
+        loadData().catch((error) => setStatus(`読み込みに失敗しました: ${error.message}`, "error"));
+      });
+      $("daysSelect").addEventListener("change", () => {
+        loadData().catch((error) => setStatus(`読み込みに失敗しました: ${error.message}`, "error"));
+      });
+
+      window.addEventListener("load", () => {
+        loadData().catch((error) => setStatus(`読み込みに失敗しました: ${error.message}`, "error"));
+      });
+    </script>
+  </body>
+</html>
