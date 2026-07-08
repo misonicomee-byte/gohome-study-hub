@@ -53,10 +53,19 @@ Cloudflare D1 `gohome-study-analytics` に、サイト内クリックと法定�
 npx wrangler d1 migrations apply gohome-study-analytics --remote
 ```
 
-月次レポートは `.github/workflows/study_analytics_report.yml` が毎月2日 07:10 JST に実行し、GitHub Actions の Job Summary に出力します。Chatwork通知も行う場合は、GitHub Secrets に次を追加してください。
+月次レポートは `.github/workflows/study_analytics_report.yml` が毎月2日 07:10 JST に実行し、GitHub Actions の Job Summary に出力します。同時に、ブログ効果測定の `performance_reporting.py` と同じ数値管理Spreadsheetへ次の履歴タブを追記します。
+
+- `studyサイトイベント集計_履歴`
+- `studyサイトクリック_履歴`
+- `study法定研修動画_履歴`
+- `study法定研修アクション_履歴`
+
+Chatwork通知も行う場合は、GitHub Secrets に次を追加してください。
 
 ```text
 ANALYTICS_REPORT_TOKEN=Pages Functions の集計APIを読むためのBearer token
+PATIENT_MAP_SA_JSON=Google Sheetsへ追記できるサービスアカウントJSON
+BLOG_PERFORMANCE_SPREADSHEET_ID=任意。未設定時はperformance_reporting.pyと同じ既定Spreadsheet
 CHATWORK_API_TOKEN=通知に使うChatwork API Token
 CHATWORK_NOTIFY_ROOM_ID=通知先ルームID
 ```
