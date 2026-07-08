@@ -56,9 +56,12 @@ npx wrangler d1 migrations apply gohome-study-analytics --remote
 月次レポートは `.github/workflows/study_analytics_report.yml` が毎月2日 07:10 JST に実行し、GitHub Actions の Job Summary に出力します。Chatwork通知も行う場合は、GitHub Secrets に次を追加してください。
 
 ```text
+ANALYTICS_REPORT_TOKEN=Pages Functions の集計APIを読むためのBearer token
 CHATWORK_API_TOKEN=通知に使うChatwork API Token
 CHATWORK_NOTIFY_ROOM_ID=通知先ルームID
 ```
+
+`ANALYTICS_REPORT_TOKEN` は Cloudflare Pages の環境変数にも同じ値を設定します。このtokenが無い場合、`/api/analytics/report` は503を返します。
 
 ## 動画の追加方法
 

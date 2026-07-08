@@ -3,6 +3,7 @@ import { appendFileSync } from "node:fs";
 
 const DATABASE_NAME = process.env.ANALYTICS_DATABASE_NAME || "gohome-study-analytics";
 const DATABASE_ID = process.env.ANALYTICS_DATABASE_ID || "5a97458f-7a20-416b-b2f6-968595da0f4f";
+const REPORT_URL = process.env.ANALYTICS_REPORT_URL || "https://study.gohome-clinic.com/api/analytics/report";
 const days = normalizeDays(process.env.REPORT_DAYS);
 
 const sinceExpression = `datetime('now', '-${days} days')`;
@@ -68,12 +69,7 @@ const queries = {
   `,
 };
 
-const result = {
-  topClicks: await queryRows(queries.topClicks),
-  videoStats: await queryRows(queries.videoStats),
-  trainingActions: await queryRows(queries.trainingActions),
-  totals: await queryRows(queries.totals),
-};
+const result = await loadReportData();
 
 const markdown = renderMarkdown(result);
 console.log(markdown);
@@ -94,10 +90,47 @@ function normalizeDays(value) {
 }
 
 async function queryRows(sql) {
+  if (process.env.ANALYTICS_REPORT_TOKEN) {
+    throw new Error("Direct D1 query is disabled when ANALYTICS_REPORT_TOKEN is set.");
+  }
   if (process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID) {
     return queryRowsWithCloudflareApi(sql);
   }
   return queryRowsWithWrangler(sql);
+}
+
+async function loadReportData() {
+  if (process.env.ANALYTICS_REPORT_TOKEN) {
+    return queryRowsWithReportEndpoint();
+  }
+
+  return {
+    topClicks: await queryRows(queries.topClicks),
+    videoStats: await queryRows(queries.videoStats),
+    trainingActions: await queryRows(queries.trainingActions),
+    totals: await queryRows(queries.totals),
+  };
+}
+
+async function queryRowsWithReportEndpoint() {
+  const url = new URL(REPORT_URL);
+  url.searchParams.set("days", String(days));
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${process.env.ANALYTICS_REPORT_TOKEN}`,
+      Accept: "application/json",
+    },
+  });
+  const json = await response.json();
+  if (!response.ok || json.ok !== true) {
+    throw new Error(`Analytics report endpoint failed: ${JSON.stringify(json)}`);
+  }
+  return {
+    topClicks: Array.isArray(json.data?.topClicks) ? json.data.topClicks : [],
+    videoStats: Array.isArray(json.data?.videoStats) ? json.data.videoStats : [],
+    trainingActions: Array.isArray(json.data?.trainingActions) ? json.data.trainingActions : [],
+    totals: Array.isArray(json.data?.totals) ? json.data.totals : [],
+  };
 }
 
 async function queryRowsWithCloudflareApi(sql) {
