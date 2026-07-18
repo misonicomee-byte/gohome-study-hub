@@ -6,6 +6,8 @@
  * fetch失敗時は空配列を返す（ビルドは止めない）
  */
 
+import { YOUTUBE_SHORTS, type YouTubeShort } from "./youtubeShorts";
+
 export interface BlogPost {
   id: number | string;
   title: string;
@@ -316,6 +318,116 @@ export async function fetchLectureViewCounts(
   } catch (err) {
     console.warn("[portal] YouTube API fetch failed:", err);
     return result;
+  }
+}
+
+const YOUTUBE_CHANNEL_ID = "UCJ2B_z_pz0R_yTZkRbSl4Lg";
+const YOUTUBE_UPLOADS_PLAYLIST_ID = `UU${YOUTUBE_CHANNEL_ID.slice(2)}`;
+
+function parseIsoDurationSeconds(value: string): number {
+  const match = value.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  if (!match) return Number.POSITIVE_INFINITY;
+  return Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
+}
+
+function formatDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/**
+ * チャンネルの最新アップロードから公開Shortsを抽出し、総再生回数順で返す。
+ * YouTube Data APIにはShorts専用フラグがないため、現在のShorts上限に合わせて
+ * 3分以内の公開動画を対象とする。毎朝のGitHub Actionsビルドで再取得される。
+ */
+export async function fetchPopularYouTubeShorts(limit = 5): Promise<YouTubeShort[]> {
+  const apiKey =
+    import.meta.env.YOUTUBE_API_KEY ?? process.env.YOUTUBE_API_KEY ?? "";
+  const fallback = () =>
+    [...YOUTUBE_SHORTS]
+      .sort((a, b) => b.fallbackViews - a.fallbackViews)
+      .slice(0, limit);
+
+  if (!apiKey) {
+    console.warn("[portal] YOUTUBE_API_KEY 未設定 — Shortsランキングは確認済みデータを使用");
+    return fallback();
+  }
+
+  try {
+    const ids: string[] = [];
+    let pageToken = "";
+    do {
+      const playlistUrl =
+        `https://www.googleapis.com/youtube/v3/playlistItems` +
+        `?part=contentDetails&playlistId=${YOUTUBE_UPLOADS_PLAYLIST_ID}` +
+        `&maxResults=50&key=${apiKey}` +
+        (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
+      const playlistRes = await fetch(playlistUrl);
+      if (!playlistRes.ok) {
+        console.warn(`[portal] YouTube uploads fetch failed: status=${playlistRes.status}`);
+        return fallback();
+      }
+      const playlistJson = await playlistRes.json();
+      ids.push(
+        ...(playlistJson.items ?? [])
+          .map((item: any) => String(item.contentDetails?.videoId ?? ""))
+          .filter(Boolean),
+      );
+      pageToken = String(playlistJson.nextPageToken ?? "");
+    } while (pageToken && ids.length < 500);
+
+    if (ids.length === 0) return fallback();
+
+    const idBatches = Array.from(
+      { length: Math.ceil(ids.length / 50) },
+      (_, index) => ids.slice(index * 50, index * 50 + 50),
+    );
+    const videoResponses = await Promise.all(
+      idBatches.map(async (batch) => {
+        const videosUrl =
+          `https://www.googleapis.com/youtube/v3/videos` +
+          `?part=snippet,contentDetails,statistics,status&id=${batch.join(",")}` +
+          `&key=${apiKey}`;
+        const response = await fetch(videosUrl);
+        if (!response.ok) {
+          throw new Error(`YouTube Shorts details status=${response.status}`);
+        }
+        return response.json();
+      }),
+    );
+    const shorts = videoResponses
+      .flatMap((json: any) => json.items ?? [])
+      .map((item: any) => {
+        const seconds = parseIsoDurationSeconds(String(item.contentDetails?.duration ?? ""));
+        return {
+          youtubeId: String(item.id ?? ""),
+          title: String(item.snippet?.title ?? ""),
+          publishedAt: String(item.snippet?.publishedAt ?? "").slice(0, 10),
+          duration: formatDuration(seconds),
+          fallbackViews: Number(item.statistics?.viewCount ?? 0),
+          seconds,
+          privacyStatus: String(item.status?.privacyStatus ?? ""),
+          liveBroadcastContent: String(item.snippet?.liveBroadcastContent ?? "none"),
+        };
+      })
+      .filter(
+        (item: any) =>
+          item.youtubeId &&
+          item.title &&
+          item.privacyStatus === "public" &&
+          item.liveBroadcastContent === "none" &&
+          item.seconds > 0 &&
+          item.seconds <= 180,
+      )
+      .sort((a: any, b: any) => b.fallbackViews - a.fallbackViews)
+      .slice(0, limit)
+      .map(({ seconds: _seconds, privacyStatus: _privacy, liveBroadcastContent: _live, ...item }: any) => item as YouTubeShort);
+
+    console.log(`[portal] YouTube Shorts ranking OK: ${shorts.length} videos from ${ids.length} uploads`);
+    return shorts.length > 0 ? shorts : fallback();
+  } catch (err) {
+    console.warn("[portal] YouTube Shorts fetch failed:", err);
+    return fallback();
   }
 }
 
