@@ -1,3 +1,5 @@
+import { validateManifest } from "../monthly-ranking-data/schema.mjs";
+
 const CHANNEL_LABELS = Object.freeze({
   youtube: "YouTube Shorts",
   blog: "ブログ",
@@ -16,36 +18,63 @@ function japaneseMonth(month) {
   return `${Number(match[1])}年${Number(match[2])}月`;
 }
 
-function validatedItems(items) {
-  if (!Array.isArray(items) || items.length !== 3 || items.some((item, index) => item?.rank !== index + 1)) {
-    throw new Error("manifest must contain exact TOP3");
+const CONTROL = /[\u0000-\u001f\u007f]/u;
+const MEDICAL_CLAIM = /治る|治ります|完治|必ず|絶対|最高の医療|治療効果/u;
+
+function safeText(value, name) {
+  if (typeof value !== "string" || !value.trim() || value.length > 500 || CONTROL.test(value)) {
+    throw new Error(`${name} contains unsafe text`);
   }
-  for (const item of items) {
-    if (typeof item.title !== "string" || !item.title.trim() ||
-        !Number.isFinite(item.metricValue) || typeof item.url !== "string" || !item.url.startsWith("https://")) {
-      throw new Error(`invalid rank ${item.rank}`);
-    }
+  if (MEDICAL_CLAIM.test(value)) throw new Error(`${name} contains an unsupported claim`);
+  return value;
+}
+
+function safeHttpsUrl(value, name) {
+  safeText(value, name);
+  const parsed = new URL(value);
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || !parsed.hostname) {
+    throw new Error(`${name} must be a public HTTPS URL`);
   }
-  return items;
+  return value;
+}
+
+function localizedRankingLabel(manifest, month) {
+  if (manifest.rankingMode === "initialPublishedMonthCurrentViews") {
+    return `${month}公開投稿の現在の閲覧数（初回限定・月内の増加数ではありません）`;
+  }
+  const label = safeText(manifest.rankingLabel, "rankingLabel");
+  return label.replaceAll(manifest.period.month, month);
+}
+
+function descriptionLead(manifest, month, channelLabel) {
+  if (manifest.rankingMode === "initialPublishedMonthCurrentViews") {
+    return `${month}に公開された${channelLabel}投稿を、現在の閲覧数で集計したTOP3です。初回限定の集計で、${month}中の増加数ではありません。`;
+  }
+  return `${month}に多く見られた${channelLabel}コンテンツTOP3をご紹介します。`;
 }
 
 export function buildCopy(manifest) {
-  if (!manifest || !CHANNEL_LABELS[manifest.channel] || typeof manifest.rankingLabel !== "string") {
-    throw new Error("invalid manifest copy input");
-  }
+  validateManifest(manifest);
+  if (!Object.hasOwn(CHANNEL_LABELS, manifest.channel)) throw new Error("invalid manifest copy input");
   const month = japaneseMonth(manifest.period?.month);
-  const items = validatedItems(manifest.items);
+  const items = manifest.items;
+  const rankingLabel = localizedRankingLabel(manifest, month);
+  for (const item of items) {
+    safeText(item.title, `rank ${item.rank} title`);
+    safeHttpsUrl(item.url, `rank ${item.rank} URL`);
+    if (item.metricValue < 0) throw new Error(`rank ${item.rank} metric must be non-negative`);
+  }
   const ordered = [...items].sort((a, b) => b.rank - a.rank);
   const lines = [`${month}の${CHANNEL_LABELS[manifest.channel]}人気コンテンツ、トップ3をご紹介します。`];
   for (const item of ordered) {
-    lines.push(`第${item.rank}位、${item.title}。${manifest.rankingLabel}は${item.metricValue.toLocaleString("ja-JP")}でした。`);
+    lines.push(`第${item.rank}位、${item.title}。${rankingLabel}は${item.metricValue.toLocaleString("ja-JP")}でした。`);
   }
   lines.push("気になる内容は、ごうホームクリニック公式チャンネルとサイトからご覧ください。");
   const title = `【${month}】${CHANNEL_LABELS[manifest.channel]} 人気コンテンツTOP3`;
   const rankingLines = items.map((item) => `${item.rank}位 ${item.title}\n${item.url}`).join("\n\n");
   const description = [
-    `${month}に多く見られた${CHANNEL_LABELS[manifest.channel]}コンテンツTOP3をご紹介します。`,
-    `集計指標：${manifest.rankingLabel}`,
+    descriptionLead(manifest, month, CHANNEL_LABELS[manifest.channel]),
+    `集計指標：${rankingLabel}`,
     rankingLines,
     "ごうホームクリニック\nhttps://gohome-clinic.com/",
     "※本動画はAIを活用して制作しています。掲載情報は公式情報をご確認ください。",
