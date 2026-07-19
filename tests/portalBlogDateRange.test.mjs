@@ -46,4 +46,6 @@ test("portal blog request sends explicit dates without the retired days paramete
   assert.doesNotMatch(fetchSource, /\bdays\b/);
   assert.match(source, /let _blogCachePromise: Promise<BlogPost\[]> \| null = null/);
   assert.match(fetchSource, /if \(_blogCachePromise\) return _blogCachePromise/);
+  assert.match(fetchSource, /attempt < 3/);
+  assert.match(fetchSource, /errorCode === "UPSTREAM_UNAVAILABLE"/);
 });

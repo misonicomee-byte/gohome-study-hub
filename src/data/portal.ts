@@ -111,22 +111,28 @@ async function fetchBlogFromGAS(): Promise<BlogPost[]> {
         endDate,
         limit: "100",
       });
-      const res = await fetch(url, FETCH_OPTS);
-      if (!res.ok) {
-        console.warn(`[portal] blog GAS fetch failed: status=${res.status}`);
-        return [];
-      }
-      const text = await res.text();
-      if (text.startsWith("<!") || text.startsWith("<html")) {
-        console.warn(
-          "[portal] blog GAS returned HTML (deployment may require auth)",
-        );
-        return [];
-      }
-      const json = JSON.parse(text);
-      if (json.error) {
-        console.warn("[portal] blog GAS error:", json.error);
-        return [];
+      let json: any = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const res = await fetch(url, FETCH_OPTS);
+        if (!res.ok) {
+          console.warn(`[portal] blog GAS fetch failed: status=${res.status}`);
+          return [];
+        }
+        const text = await res.text();
+        if (text.startsWith("<!") || text.startsWith("<html")) {
+          console.warn(
+            "[portal] blog GAS returned HTML (deployment may require auth)",
+          );
+          return [];
+        }
+        json = JSON.parse(text);
+        if (!json.error) break;
+        const retryable = json.errorCode === "UPSTREAM_UNAVAILABLE";
+        if (!retryable || attempt === 2) {
+          console.warn("[portal] blog GAS error:", json.error);
+          return [];
+        }
+        await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 2_000));
       }
       const data = json.data ?? [];
       console.log(`[portal] blog from GAS OK: ${data.length} posts`);
