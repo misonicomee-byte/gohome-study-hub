@@ -14,6 +14,8 @@ var PUBLIC_ERROR_CODES_ = {
 
 var PUBLIC_CACHE_MAX_BYTES_ = 90000;
 var PUBLIC_CACHE_LOCK_TIMEOUT_MS_ = 5000;
+var PUBLIC_NEGATIVE_CACHE_TTL_SECONDS_ = 60;
+var PUBLIC_RESPONSE_MAX_BYTES_ = 80000;
 
 var INSTAGRAM_SNAPSHOT_SHEET_ = "instagram_daily";
 var INSTAGRAM_SNAPSHOT_TEXT_PREFIX_ = "\u200B";
@@ -24,9 +26,14 @@ var INSTAGRAM_SNAPSHOT_HEADERS_ = [
 
 function doGet(e) {
   var params = e && e.parameter ? e.parameter : {};
+  var parameterLists = e && e.parameters ? e.parameters : {};
   var result;
   try {
-    result = handlePublicApiRequest_(params);
+    if (!hasSingleQueryValues_(parameterLists)) {
+      result = invalidRequest_("Duplicate query parameters are not allowed");
+    } else {
+      result = handlePublicApiRequest_(params);
+    }
   } catch (error) {
     console.error("Public ranking API request failed");
     result = publicError_(PUBLIC_ERROR_CODES_.UPSTREAM_UNAVAILABLE, "Content ranking is temporarily unavailable");
@@ -118,7 +125,12 @@ function cachedJson_(key, ttl, loader) {
     if (hit !== null) return hit;
 
     var value = loader();
-    if (!value || !value.error) writeCachedJson_(cache, key, value, ttl);
+    if (isPublicCacheable_(value)) {
+      var cacheTtl = value && value.error
+        ? Math.min(ttl, PUBLIC_NEGATIVE_CACHE_TTL_SECONDS_)
+        : ttl;
+      writeCachedJson_(cache, key, value, cacheTtl);
+    }
     return value;
   } finally {
     try {
@@ -127,6 +139,12 @@ function cachedJson_(key, ttl, loader) {
       console.warn("Public API cache lock release failed");
     }
   }
+}
+
+function isPublicCacheable_(value) {
+  if (!value || !value.error) return true;
+  return value.errorCode === PUBLIC_ERROR_CODES_.SNAPSHOT_NOT_CONFIGURED ||
+    value.errorCode === PUBLIC_ERROR_CODES_.SNAPSHOT_BOUNDARY_MISSING;
 }
 
 function readCachedJson_(cache, key) {
@@ -163,6 +181,12 @@ function parseCanonicalLimit_(value, defaultLimit, allowedLimits) {
 function hasOnlyQueryParams_(params, allowedNames) {
   return Object.keys(params).every(function (name) {
     return allowedNames.indexOf(name) !== -1;
+  });
+}
+
+function hasSingleQueryValues_(parameterLists) {
+  return Object.keys(parameterLists).every(function (name) {
+    return Array.isArray(parameterLists[name]) && parameterLists[name].length === 1;
   });
 }
 
@@ -222,7 +246,7 @@ function isAllowedBlogRange_(startDate, endDate) {
 }
 
 function isAllowedRankingMonth_(month) {
-  return isValidYearMonth_(month) && month >= "2020-01" && month <= currentJstDate_().slice(0, 7);
+  return isValidYearMonth_(month) && month >= "2020-01" && month < currentJstDate_().slice(0, 7);
 }
 
 function callInstagramApi_(endpoint) {
@@ -442,9 +466,42 @@ function getPodcastList_() {
         youtubeId: String(row[7] || "").trim(),
       });
     }
-    return { data: rows, count: rows.length };
+    return boundedPodcastResponse_(rows);
   } catch (error) {
     console.error("Podcast upstream request failed");
     return publicError_(PUBLIC_ERROR_CODES_.UPSTREAM_UNAVAILABLE, "Podcast list is temporarily unavailable");
   }
+}
+
+function boundedPodcastResponse_(rows) {
+  var totalCount = rows.length;
+  var full = { data: rows, count: totalCount };
+  if (Utilities.newBlob(JSON.stringify(full)).getBytes().length < PUBLIC_RESPONSE_MAX_BYTES_) {
+    return full;
+  }
+
+  var low = 0;
+  var high = totalCount - 1;
+  var best = 0;
+  while (low <= high) {
+    var count = Math.floor((low + high) / 2);
+    var candidate = {
+      data: rows.slice(0, count),
+      count: count,
+      totalCount: totalCount,
+      truncated: true,
+    };
+    if (Utilities.newBlob(JSON.stringify(candidate)).getBytes().length < PUBLIC_RESPONSE_MAX_BYTES_) {
+      best = count;
+      low = count + 1;
+    } else {
+      high = count - 1;
+    }
+  }
+  return {
+    data: rows.slice(0, best),
+    count: best,
+    totalCount: totalCount,
+    truncated: true,
+  };
 }

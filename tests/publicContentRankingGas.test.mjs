@@ -47,6 +47,8 @@ function createHarness({
   ]);
   const events = [];
   let lockHeld = false;
+  let spreadsheetReads = 0;
+  let blobCalls = 0;
   const context = vm.createContext({
     console: { error() {}, warn() {} },
     Date: FixedDate,
@@ -97,6 +99,7 @@ function createHarness({
     Utilities: {
       formatDate,
       newBlob(value) {
+        blobCalls += 1;
         return { getBytes() { return [...Buffer.from(value, "utf8")]; } };
       },
     },
@@ -119,19 +122,33 @@ function createHarness({
         return {
           getSheetByName(name) {
             if (name !== expectedName) return null;
-            return { getDataRange() { return { getValues() { return rows; } }; } };
+            return { getDataRange() { return { getValues() { spreadsheetReads += 1; return rows; } }; } };
           },
         };
       },
     },
   });
   vm.runInContext(source, context, { filename: "PublicCode.js" });
-  return { context, cache, events, properties, get lockHeld() { return lockHeld; } };
+  return {
+    context,
+    cache,
+    events,
+    properties,
+    get blobCalls() { return blobCalls; },
+    get lockHeld() { return lockHeld; },
+    get spreadsheetReads() { return spreadsheetReads; },
+  };
 }
 
-function callApi(harness, params) {
+function callApi(harness, params, parameterLists = null) {
   harness.context.__params = params;
-  const response = vm.runInContext("doGet({ parameter: __params })", harness.context);
+  harness.context.__parameterLists = parameterLists ?? Object.fromEntries(
+    Object.entries(params).map(([name, value]) => [name, [String(value)]]),
+  );
+  const response = vm.runInContext(
+    "doGet({ parameter: __params, parameters: __parameterLists })",
+    harness.context,
+  );
   return JSON.parse(response.content);
 }
 
@@ -159,8 +176,20 @@ test("public GAS is an anonymous JSON-only deployment with exact read-only scope
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/script.external_request",
   ]);
-  assert.doesNotMatch(source, /HtmlService|google\.script\.run|getAdsToken|sendToChatWork|ScriptApp|setProperty\(/);
+  assert.doesNotMatch(
+    source,
+    /HtmlService|google\.script\.run|getAdsToken|sendToChatWork|ScriptApp|DriveApp|setProperty\(|deleteProperty\(|deleteAllProperties\(/,
+  );
   assert.doesNotMatch(source, /access_token=/);
+  assert.doesNotMatch(source, /appendRow|setValue\(|setValues\(|insertSheet|newTrigger|createTrigger/);
+
+  const propertyNames = [...source.matchAll(/getProperty\("([A-Z0-9_]+)"\)/g)]
+    .map((match) => match[1]);
+  assert.deepEqual([...new Set(propertyNames)].sort(), [
+    "CONTENT_SNAPSHOT_SPREADSHEET_ID",
+    "META_PAGE_ACCESS_TOKEN",
+    "PODCAST_SPREADSHEET_ID",
+  ]);
 
   const publicFunctions = [...source.matchAll(/^function\s+([A-Za-z0-9_]+)\s*\(/gm)]
     .map((match) => match[1])
@@ -199,7 +228,6 @@ test("routes accept only canonical consumer query shapes", () => {
     [{ api: "instagram-posts", limit: "50" }, "getInstagramPostsWithInsights_"],
     [{ api: "instagram-posts", limit: "100" }, "getInstagramPostsWithInsights_"],
     [{ api: "instagram-monthly-ranking", month: "2020-01", limit: "3" }, "getInstagramMonthlyRanking_"],
-    [{ api: "instagram-monthly-ranking", month: "2026-07" }, "getInstagramMonthlyRanking_"],
     [{ api: "podcast-list" }, "getPodcastList_"],
   ];
   for (const [params, loader] of accepted) {
@@ -218,12 +246,28 @@ test("routes accept only canonical consumer query shapes", () => {
     { api: "instagram-monthly-ranking", month: "0000-01", limit: "3" },
     { api: "instagram-monthly-ranking", month: "2019-12", limit: "3" },
     { api: "instagram-monthly-ranking", month: "2026-08", limit: "3" },
+    { api: "instagram-monthly-ranking", month: "2026-07", limit: "3" },
     { api: "instagram-monthly-ranking", month: "2026-06", limit: "100" },
     { api: "podcast-list", limit: "1" },
   ];
   for (const params of rejected) {
     const result = callApi(createHarness(), params);
     assert.equal(result.errorCode, "INVALID_REQUEST", JSON.stringify(params));
+  }
+
+  const canonical = {
+    api: "blog-ranking",
+    startDate: "2026-06-01",
+    endDate: "2026-06-30",
+    limit: "100",
+  };
+  for (const duplicateName of Object.keys(canonical)) {
+    const parameterLists = Object.fromEntries(
+      Object.entries(canonical).map(([name, value]) => [name, [value]]),
+    );
+    parameterLists[duplicateName].push(canonical[duplicateName]);
+    const duplicate = callApi(createHarness(), canonical, parameterLists);
+    assert.equal(duplicate.errorCode, "INVALID_REQUEST", duplicateName);
   }
 });
 
@@ -369,6 +413,15 @@ test("monthly route preserves exact boundaries, ranking, and collector error cod
     api: "instagram-monthly-ranking", month: "2026-06", limit: "3",
   });
   assert.equal(missingBoundary.errorCode, "INSTAGRAM_COMPLETE_MONTH_BOUNDARY_SNAPSHOTS_REQUIRED");
+
+  const negativeCache = createHarness({ spreadsheetRows: [snapshotHeaders] });
+  callApi(negativeCache, { api: "instagram-monthly-ranking", month: "2026-06", limit: "3" });
+  callApi(negativeCache, { api: "instagram-monthly-ranking", month: "2026-06", limit: "3" });
+  const negativePuts = negativeCache.events.filter((event) => event.type === "cachePut");
+  assert.equal(negativePuts.length, 1);
+  assert.ok(negativePuts[0].ttl > 0 && negativePuts[0].ttl <= 60);
+  assert.equal(negativeCache.events.filter((event) => event.type === "tryLock").length, 1);
+  assert.ok(negativeCache.spreadsheetReads <= 1);
 });
 
 test("podcast route preserves the portal response schema", () => {
@@ -387,4 +440,17 @@ test("podcast route preserves the portal response schema", () => {
     }],
     count: 1,
   });
+
+  const manyRows = [podcastRows[0]];
+  for (let index = 0; index < 1000; index += 1) {
+    manyRows.push([index, "YouTube", `Episode ${index} ${"長".repeat(200)}`, "2026/06/01",
+      `https://example.test/${index}/${"x".repeat(300)}`, "", "", `yt-${index}`]);
+  }
+  const largeHarness = createHarness({ podcastRows: manyRows });
+  const bounded = callApi(largeHarness, { api: "podcast-list" });
+  assert.equal(bounded.truncated, true);
+  assert.equal(bounded.totalCount, 1000);
+  assert.equal(bounded.count, bounded.data.length);
+  assert.ok(Buffer.byteLength(JSON.stringify(bounded), "utf8") < 80000);
+  assert.ok(largeHarness.blobCalls <= 20, `blob sizing calls: ${largeHarness.blobCalls}`);
 });
