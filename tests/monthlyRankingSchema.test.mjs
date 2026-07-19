@@ -33,6 +33,23 @@ test("rejects duplicate ranks", () => assert.throws(() => validateManifest({
   items: valid.items.map((item) => ({ ...item, rank: 1 })),
 }), /ranks 1,2,3/));
 
+test("rejects partial-month period boundaries", () => {
+  for (const period of [
+    { ...valid.period, startDate: "2026-06-02" },
+    { ...valid.period, endDate: "2026-06-29" },
+  ]) {
+    assert.throws(() => validateManifest({ ...valid, period }), /calendar day of period.month/);
+  }
+});
+
+test("accepts a full leap-February period", () => {
+  const leapFebruary = {
+    ...valid,
+    period: { month: "2028-02", startDate: "2028-02-01", endDate: "2028-02-29", timezone: "Asia/Tokyo" },
+  };
+  assert.equal(validateManifest(leapFebruary), leapFebruary);
+});
+
 test("rejects required manifest metadata when missing or invalid", () => {
   const invalidManifests = [
     { ...valid, period: { ...valid.period, month: undefined } },

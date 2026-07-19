@@ -51,11 +51,17 @@ export function validateManifest(value) {
   }
   const { month, startDate, endDate, timezone } = value.period;
   if (typeof month !== "string" || !MONTH.test(month)) throw new Error("period.month must be YYYY-MM");
-  if (!isCalendarDate(startDate) || !startDate.startsWith(`${month}-`)) {
-    throw new Error("period.startDate must be a valid date in period.month");
+  const expectedStartDate = `${month}-01`;
+  const [, monthNumber] = month.split("-");
+  const expectedEndDate = `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(monthNumber), 0))
+    .getUTCDate()
+    .toString()
+    .padStart(2, "0")}`;
+  if (!isCalendarDate(startDate) || !startDate.startsWith(`${month}-`) || startDate !== expectedStartDate) {
+    throw new Error("period.startDate must be the first calendar day of period.month");
   }
-  if (!isCalendarDate(endDate) || !endDate.startsWith(`${month}-`)) {
-    throw new Error("period.endDate must be a valid date in period.month");
+  if (!isCalendarDate(endDate) || !endDate.startsWith(`${month}-`) || endDate !== expectedEndDate) {
+    throw new Error("period.endDate must be the last calendar day of period.month");
   }
   if (startDate > endDate) throw new Error("period.startDate must not be after period.endDate");
   if (timezone !== "Asia/Tokyo") throw new Error("timezone must be Asia/Tokyo");
