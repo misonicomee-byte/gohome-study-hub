@@ -21,6 +21,17 @@ from ranking_shorts.render import IMAGE_SUFFIXES, TIMELINE, VIDEO_SUFFIXES, buil
 
 BGM_SUFFIXES = frozenset({".wav", ".mp3", ".m4a", ".aac"})
 CLINIC_URL = "https://gohome-clinic.com/"
+CHANNEL_LABELS = {
+    "youtube": "YouTube Shorts",
+    "blog": "ブログ",
+    "instagram": "Instagram",
+}
+CHANNEL_TAGS = {
+    "youtube": "#YouTubeShorts",
+    "blog": "#クリニックブログ",
+    "instagram": "#Instagram",
+}
+INITIAL_MONTH_RANKING_MODE = "initialPublishedMonthCurrentViews"
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +89,17 @@ def _absent(path):
         raise ValueError(f"output already exists: {Path(path).name}")
 
 
+def _reject_symlinked_output_parent(output, manifest):
+    output = Path(output)
+    manifest_parent = Path(manifest).parent
+    shared_parent = Path(os.path.commonpath((output, manifest_parent)))
+    current = shared_parent
+    for component in output.parent.relative_to(shared_parent).parts:
+        current /= component
+        if current.is_symlink():
+            raise ValueError("output parent must not contain a symlink")
+
+
 @contextmanager
 def exclusive_reservation(lock):
     lock = Path(lock)
@@ -129,6 +151,7 @@ def preflight(args, environ=os.environ, which=shutil.which):
     lexical_output = Path(os.path.abspath(args.out.expanduser()))
     if lexical_output.suffix.lower() != ".mp4":
         raise ValueError("output must use the .mp4 extension")
+    _reject_symlinked_output_parent(lexical_output, args.manifest.expanduser().absolute())
     lexical_targets = (
         lexical_output,
         lexical_output.with_suffix(".qa.json"),
@@ -171,21 +194,46 @@ def preflight(args, environ=os.environ, which=shutil.which):
     )
 
 
+def _japanese_month(month):
+    year, number = month.split("-", 1)
+    return f"{int(year)}年{int(number)}月"
+
+
+def _post_caption(manifest):
+    month = _japanese_month(manifest.month)
+    channel_label = CHANNEL_LABELS[manifest.channel]
+    if manifest.ranking_mode == INITIAL_MONTH_RANKING_MODE:
+        lead = (
+            f"{month}に公開された{channel_label}投稿を、現在の閲覧数で集計したTOP3です。"
+            f"初回限定の集計で、{month}中の増加数ではありません。"
+        )
+        ranking_label = (
+            f"{month}公開投稿の現在の閲覧数（初回限定・月内の増加数ではありません）"
+        )
+    else:
+        lead = f"{month}に多く見られた{channel_label}コンテンツTOP3をご紹介します。"
+        ranking_label = manifest.ranking_label.replace(manifest.month, month)
+    ranking_lines = "\n\n".join(
+        f"{item.rank}位 {item.title}\n{item.url}" for item in manifest.items
+    )
+    title = f"【{month}】{channel_label} 人気コンテンツTOP3"
+    description = "\n\n".join(
+        (
+            lead,
+            f"集計指標：{ranking_label}",
+            ranking_lines,
+            f"ごうホームクリニック\n{CLINIC_URL}",
+            "※本動画はAIを活用して制作しています。掲載情報は公式情報をご確認ください。",
+            "#ごうホームクリニック #訪問診療 #在宅医療 #人気コンテンツ "
+            f"{CHANNEL_TAGS[manifest.channel]}",
+        )
+    )
+    return f"■タイトル\n{title}\n\n■説明文\n{description}\n"
+
+
 def _publication_files(manifest, post_caption, captions_json):
     script = build_script(manifest)
-    title = f"{manifest.month} 人気コンテンツTOP3"
-    description = (
-        f"{manifest.month}の人気コンテンツTOP3を、"
-        f"{manifest.ranking_label}にもとづいてご紹介します。"
-        "詳細は公式チャンネルとサイトでご覧ください。"
-    )
-    copy = (
-        f"■タイトル\n{title}\n\n■説明文\n{description}\n\n"
-        f"ごうホームクリニック\n{CLINIC_URL}\n\n"
-        "※本動画はAIを活用して制作しています。掲載情報は公式情報をご確認ください。\n\n"
-        "#ごうホームクリニック #訪問診療 #在宅医療 #人気コンテンツ\n"
-    )
-    post_caption.write_text(copy, encoding="utf-8")
+    post_caption.write_text(_post_caption(manifest), encoding="utf-8")
     captions = [
         {"start": start, "end": end, "text": script.captions[index]}
         for index, (_, start, end) in enumerate(TIMELINE)

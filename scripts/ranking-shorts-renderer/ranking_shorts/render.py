@@ -361,6 +361,29 @@ def _wav_duration(path):
     return frames / rate
 
 
+def validate_prebuilt_narration(path):
+    path = Path(path)
+    try:
+        with wave.open(str(path), "rb") as source:
+            channels = source.getnchannels()
+            sample_width = source.getsampwidth()
+            rate = source.getframerate()
+            frames = source.getnframes()
+            compression = source.getcomptype()
+    except (OSError, EOFError, wave.Error):
+        raise RuntimeError(
+            "prebuilt narration must be a valid 44.1 kHz stereo 16-bit PCM WAV"
+        ) from None
+    if (channels, sample_width, rate, compression) != (2, 2, 44100, "NONE"):
+        raise RuntimeError(
+            "prebuilt narration must be a valid 44.1 kHz stereo 16-bit PCM WAV"
+        )
+    duration = frames / rate if rate else 0
+    if abs(duration - TIMELINE[-1][2]) > (1 / rate):
+        raise RuntimeError("prebuilt narration must be exactly 54 seconds")
+    return path
+
+
 def build_aligned_narration_command(segments, durations, output):
     if len(segments) != len(TIMELINE) or len(durations) != len(TIMELINE):
         raise ValueError("timeline narration requires one segment per caption")
@@ -463,6 +486,7 @@ def render_video(
             source = Path(prebuilt_narration)
             if not source.is_file():
                 raise ValueError("prebuilt narration is missing")
+            validate_prebuilt_narration(source)
             shutil.copyfile(source, narration)
         else:
             synthesize_timeline_narration(

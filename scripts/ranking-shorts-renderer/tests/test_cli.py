@@ -157,6 +157,23 @@ class CliTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "already exists"):
                 self.cli.preflight(args, environ={}, which=lambda name: f"/bin/{name}")
 
+    def test_preflight_rejects_output_through_symlinked_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, assets, bgm, narration = self.make_project(root)
+            outside = root / "outside"
+            outside.mkdir()
+            linked_parent = root / "candidate"
+            linked_parent.symlink_to(outside, target_is_directory=True)
+            output = linked_parent / "video.mp4"
+            args = self.cli.build_parser().parse_args(
+                self.argv(manifest, assets, bgm, output, narration)
+            )
+
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                self.cli.preflight(args, environ={}, which=lambda name: f"/bin/{name}")
+            self.assertFalse((outside / "video.mp4").exists())
+
     def test_exclusive_reservation_rejects_a_concurrent_run(self):
         with tempfile.TemporaryDirectory() as temporary:
             lock = Path(temporary) / ".video.mp4.lock"
@@ -242,17 +259,79 @@ class CliTests(unittest.TestCase):
             self.assertTrue(post_caption.is_file())
             self.assertTrue(captions_json.is_file())
             copy = post_caption.read_text(encoding="utf-8")
-            self.assertRegex(
+            self.assertEqual(
                 copy,
-                r"\A■タイトル\n.+\n\n■説明文\n.+\n\n"
-                r"ごうホームクリニック\nhttps://gohome-clinic\.com/\n\n"
-                r"※.+AI.+\n\n#.+\n\Z",
+                "■タイトル\n"
+                "【2026年6月】YouTube Shorts 人気コンテンツTOP3\n\n"
+                "■説明文\n"
+                "2026年6月に多く見られたYouTube ShortsコンテンツTOP3をご紹介します。\n\n"
+                "集計指標：6月の再生回数\n\n"
+                "1位 タイトル1\nhttps://example.test/1\n\n"
+                "2位 タイトル2\nhttps://example.test/2\n\n"
+                "3位 タイトル3\nhttps://example.test/3\n\n"
+                "ごうホームクリニック\nhttps://gohome-clinic.com/\n\n"
+                "※本動画はAIを活用して制作しています。掲載情報は公式情報をご確認ください。\n\n"
+                "#ごうホームクリニック #訪問診療 #在宅医療 #人気コンテンツ #YouTubeShorts\n",
             )
             self.assertNotIn("治ります", copy)
             captions = json.loads(captions_json.read_text(encoding="utf-8"))
             self.assertEqual(captions[0]["start"], 0)
             self.assertEqual(captions[-1]["end"], 54)
             self.assertFalse((root / "draft" / "video.mp4").exists())
+
+    def test_publication_copy_preserves_exact_initial_month_ranking_mode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = valid_manifest()
+            raw["channel"] = "blog"
+            raw["rankingMode"] = "initialPublishedMonthCurrentViews"
+            raw["rankingLabel"] = "must not replace canonical mode wording"
+            manifest_path = root / "ranking.json"
+            manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+            post_caption = root / "post_caption.txt"
+            captions_json = root / "captions.json"
+
+            self.cli._publication_files(
+                self.cli.RankingManifest.from_path(manifest_path),
+                post_caption,
+                captions_json,
+            )
+
+            self.assertEqual(
+                post_caption.read_text(encoding="utf-8"),
+                "■タイトル\n"
+                "【2026年6月】ブログ 人気コンテンツTOP3\n\n"
+                "■説明文\n"
+                "2026年6月に公開されたブログ投稿を、現在の閲覧数で集計したTOP3です。"
+                "初回限定の集計で、2026年6月中の増加数ではありません。\n\n"
+                "集計指標：2026年6月公開投稿の現在の閲覧数（初回限定・月内の増加数ではありません）\n\n"
+                "1位 タイトル1\nhttps://example.test/1\n\n"
+                "2位 タイトル2\nhttps://example.test/2\n\n"
+                "3位 タイトル3\nhttps://example.test/3\n\n"
+                "ごうホームクリニック\nhttps://gohome-clinic.com/\n\n"
+                "※本動画はAIを活用して制作しています。掲載情報は公式情報をご確認ください。\n\n"
+                "#ごうホームクリニック #訪問診療 #在宅医療 #人気コンテンツ #クリニックブログ\n",
+            )
+
+    def test_publication_copy_uses_instagram_media_label_and_hashtag(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = valid_manifest()
+            raw["channel"] = "instagram"
+            manifest_path = root / "ranking.json"
+            manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+            post_caption = root / "post_caption.txt"
+
+            self.cli._publication_files(
+                self.cli.RankingManifest.from_path(manifest_path),
+                post_caption,
+                root / "captions.json",
+            )
+
+            copy = post_caption.read_text(encoding="utf-8")
+            self.assertIn("【2026年6月】Instagram 人気コンテンツTOP3", copy)
+            self.assertIn("2026年6月に多く見られたInstagramコンテンツ", copy)
+            self.assertTrue(copy.endswith("#Instagram\n"))
 
     def test_qa_failure_keeps_draft_and_never_creates_candidate(self):
         with tempfile.TemporaryDirectory() as temporary:

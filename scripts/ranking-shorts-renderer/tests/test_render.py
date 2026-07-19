@@ -28,6 +28,7 @@ from ranking_shorts.render import (
     run_ffmpeg,
     scene_frame_number,
     special_transition_starts,
+    validate_prebuilt_narration,
 )
 
 
@@ -58,6 +59,31 @@ def fake_manifest():
 
 
 class RenderTests(unittest.TestCase):
+    def test_prebuilt_narration_requires_render_ready_pcm_wav_with_exact_duration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            valid = root / "valid.wav"
+            with wave.open(str(valid), "wb") as output:
+                output.setnchannels(2)
+                output.setsampwidth(2)
+                output.setframerate(44100)
+                output.writeframes(b"\0" * (54 * 44100 * 2 * 2))
+            self.assertEqual(validate_prebuilt_narration(valid), valid)
+
+            invalid = root / "invalid.wav"
+            invalid.write_bytes(b"not-a-wave-file")
+            with self.assertRaisesRegex(RuntimeError, "prebuilt narration.*PCM WAV"):
+                validate_prebuilt_narration(invalid)
+
+            overlong = root / "overlong.wav"
+            with wave.open(str(overlong), "wb") as output:
+                output.setnchannels(2)
+                output.setsampwidth(2)
+                output.setframerate(44100)
+                output.writeframes(b"\0" * (55 * 44100 * 2 * 2))
+            with self.assertRaisesRegex(RuntimeError, "prebuilt narration.*54 seconds"):
+                validate_prebuilt_narration(overlong)
+
     def test_timeline_is_54_seconds_without_gaps(self):
         self.assertEqual(
             TIMELINE,
