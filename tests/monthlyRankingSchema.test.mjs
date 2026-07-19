@@ -24,6 +24,22 @@ const valid = {
 };
 
 test("accepts an exact TOP3 manifest", () => assert.equal(validateManifest(valid), valid));
+test("accepts Podcast items only with canonical Spotify and RSS image metadata", () => {
+  const podcast = {
+    ...valid,
+    channel: "podcast",
+    items: valid.items.map((item, index) => ({
+      ...item,
+      url: `https://podcasters.spotify.com/pod/show/go-ito/episodes/episode-${index}`,
+      imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${index}.jpg`,
+    })),
+  };
+  assert.equal(validateManifest(podcast), podcast);
+  assert.throws(() => validateManifest({
+    ...podcast,
+    items: podcast.items.map((item, index) => index ? item : { ...item, imageUrl: "https://evil.example/1.jpg" }),
+  }), /image/i);
+});
 test("rejects fewer than three items", () => assert.throws(() => validateManifest({
   ...valid,
   items: valid.items.slice(0, 2),

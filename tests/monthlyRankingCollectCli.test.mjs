@@ -43,7 +43,10 @@ function fixtureManifest(channel, marker = channel) {
       rank,
       contentId: `${marker}-${rank}`,
       title: `${channel}-${rank}`,
-      url: `https://example.test/${channel}/${rank}`,
+      url: channel === "podcast"
+        ? `https://podcasters.spotify.com/pod/show/go-ito/episodes/${marker}-${rank}`
+        : `https://example.test/${channel}/${rank}`,
+      ...(channel === "podcast" ? { imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${rank}.jpg` } : {}),
       publishedAt: "2026-01-01",
       metricValue: 4 - rank,
       secondaryMetricValue: 1,
@@ -52,9 +55,10 @@ function fixtureManifest(channel, marker = channel) {
 }
 
 test("CLI arguments are strict and reject unknown, duplicate, or missing values", () => {
-  assert.deepEqual(parseCollectArgs(["--month", "2026-06", "--out", "output/test"]), {
+  assert.deepEqual(parseCollectArgs(["--month", "2026-06", "--out", "output/test", "--channel", "podcast"]), {
     month: "2026-06",
     out: "output/test",
+    channel: "podcast",
   });
   for (const argv of [
     ["2026-06"],
@@ -64,8 +68,54 @@ test("CLI arguments are strict and reject unknown, duplicate, or missing values"
     ["--month", "2026-06", "--month", "2026-05"],
     ["--month=2026-06"],
     ["--out", ""],
+    ["--channel", "unknown"],
   ]) {
     assert.throws(() => parseCollectArgs(argv), /argument|option|value|duplicate/i);
+  }
+});
+
+test("single-channel Podcast collection needs no unrelated collectors and preserves root/channel manifest shape", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "monthly-ranking-podcast-only-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const out = join(root, "podcast-only");
+  const calls = [];
+  const result = await runCollection({
+    argv: ["--month", "2026-06", "--out", out, "--channel", "podcast"],
+    env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec", YOUTUBE_ACCESS_TOKEN: "test-token" },
+    now,
+    collectors: {
+      podcast: async (options) => {
+        calls.push(options);
+        return fixtureManifest("podcast");
+      },
+    },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(result.manifests.length, 1);
+  assert.equal(result.manifests[0].channel, "podcast");
+  assert.equal(JSON.parse(await readFile(join(out, "podcast", "ranking.json"), "utf8")).channel, "podcast");
+  assert.deepEqual(await readdir(out), ["podcast"]);
+});
+
+test("single-channel collection requires only that channel's credentials", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "monthly-ranking-channel-preflight-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cases = [
+    { channel: "youtube", env: { YOUTUBE_ACCESS_TOKEN: "test-token" } },
+    { channel: "blog", env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec" } },
+    { channel: "instagram", env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec" } },
+  ];
+  for (const { channel, env } of cases) {
+    const out = join(root, channel);
+    const calls = [];
+    const result = await runCollection({
+      argv: ["--month", "2026-06", "--out", out, "--channel", channel],
+      env,
+      now,
+      collectors: { [channel]: async (options) => { calls.push(options); return fixtureManifest(channel); } },
+    });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(result.manifests.map((item) => item.channel), [channel]);
   }
 });
 
@@ -219,7 +269,7 @@ test("CLI validates all required environment configuration before network", asyn
   }
 });
 
-test("fixture-injected CLI writes all three validated manifests with the fixed channel id", async (t) => {
+test("fixture-injected CLI writes all four validated manifests with the fixed channel id", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "monthly-ranking-cli-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const out = join(root, "2026-06");
@@ -278,11 +328,12 @@ test("fixture-injected CLI writes all three validated manifests with the fixed c
     },
     fetchImpl,
     now,
+    collectors: { podcast: async () => fixtureManifest("podcast") },
   });
 
   assert.equal(result.out, out);
   assert.equal(analyticsChannelId, "channel==UCJ2B_z_pz0R_yTZkRbSl4Lg");
-  for (const channel of ["youtube", "blog", "instagram"]) {
+  for (const channel of ["youtube", "blog", "instagram", "podcast"]) {
     const manifest = JSON.parse(await readFile(join(out, channel, "ranking.json"), "utf8"));
     assert.equal(manifest.channel, channel);
     assert.equal(manifest.items.length, 3);
@@ -321,6 +372,7 @@ test("collector failure leaves no mixed final manifest directory", async (t) => 
         youtube: async () => manifest("youtube"),
         blog: async () => manifest("blog"),
         instagram: async () => { throw new Error("fixture Instagram failure"); },
+        podcast: async () => fixtureManifest("podcast"),
       },
     }),
     /fixture Instagram failure/,
@@ -343,6 +395,7 @@ test("an externally created empty output directory is never overwritten", async 
         youtube: async () => fixtureManifest("youtube"),
         blog: async () => fixtureManifest("blog"),
         instagram: async () => fixtureManifest("instagram"),
+        podcast: async () => fixtureManifest("podcast"),
       },
       fileOps: {
         symlink: async (target, path, type) => {
@@ -372,6 +425,7 @@ test("output publication is absent before the atomic boundary and complete immed
       youtube: async () => fixtureManifest("youtube"),
       blog: async () => fixtureManifest("blog"),
       instagram: async () => fixtureManifest("instagram"),
+      podcast: async () => fixtureManifest("podcast"),
     },
     fileOps: {
       symlink: async (target, path, type) => {
@@ -386,7 +440,7 @@ test("output publication is absent before the atomic boundary and complete immed
     },
   });
 
-  const expectedChannels = ["blog", "instagram", "youtube"];
+  const expectedChannels = ["blog", "instagram", "podcast", "youtube"];
   assert.deepEqual(observations, [
     { before: expectedChannels },
     { after: expectedChannels },
@@ -406,6 +460,7 @@ test("published output is a relative sibling symlink to a complete immutable dir
       youtube: async () => fixtureManifest("youtube"),
       blog: async () => fixtureManifest("blog"),
       instagram: async () => fixtureManifest("instagram"),
+      podcast: async () => fixtureManifest("podcast"),
     },
   });
 
@@ -417,8 +472,8 @@ test("published output is a relative sibling symlink to a complete immutable dir
   assert.match(target, /^\.published\.complete-/);
   const completed = resolve(root, target);
   assert.equal((await lstat(completed)).isDirectory(), true);
-  assert.deepEqual((await readdir(completed)).sort(), ["blog", "instagram", "youtube"]);
-  for (const channel of ["youtube", "blog", "instagram"]) {
+  assert.deepEqual((await readdir(completed)).sort(), ["blog", "instagram", "podcast", "youtube"]);
+  for (const channel of ["youtube", "blog", "instagram", "podcast"]) {
     const manifest = JSON.parse(await readFile(join(result.out, channel, "ranking.json"), "utf8"));
     assert.equal(manifest.channel, channel);
   }
@@ -438,6 +493,7 @@ test("a completed-directory promotion failure removes every temporary path", asy
         youtube: async () => fixtureManifest("youtube"),
         blog: async () => fixtureManifest("blog"),
         instagram: async () => fixtureManifest("instagram"),
+        podcast: async () => fixtureManifest("podcast"),
       },
       fileOps: {
         rename: async () => {
@@ -468,6 +524,7 @@ test("publication failure removes the completed sibling without altering output"
         youtube: async () => fixtureManifest("youtube"),
         blog: async () => fixtureManifest("blog"),
         instagram: async () => fixtureManifest("instagram"),
+        podcast: async () => fixtureManifest("podcast"),
       },
       fileOps: {
         symlink: async () => {
@@ -503,6 +560,7 @@ test("cleanup attempts every path and appends sanitized failures to the original
         youtube: async () => fixtureManifest("youtube"),
         blog: async () => fixtureManifest("blog"),
         instagram: async () => fixtureManifest("instagram"),
+        podcast: async () => fixtureManifest("podcast"),
       },
       fileOps: {
         symlink: async () => { throw originalError; },
@@ -542,6 +600,7 @@ test("concurrent collectors for one output have exactly one complete winner", as
       youtube: async () => fixtureManifest("youtube", marker),
       blog: async () => fixtureManifest("blog", marker),
       instagram: async () => fixtureManifest("instagram", marker),
+      podcast: async () => fixtureManifest("podcast", marker),
     },
   });
 
@@ -551,7 +610,7 @@ test("concurrent collectors for one output have exactly one complete winner", as
   assert.match(results.find(({ status }) => status === "rejected").reason.message, /already exists|EEXIST|ENOTEMPTY/i);
 
   const channels = await readdir(out);
-  assert.deepEqual(channels.sort(), ["blog", "instagram", "youtube"]);
+  assert.deepEqual(channels.sort(), ["blog", "instagram", "podcast", "youtube"]);
   const markers = await Promise.all(channels.map(async (channel) => {
     const body = JSON.parse(await readFile(join(out, channel, "ranking.json"), "utf8"));
     return body.items[0].contentId.split("-")[0];

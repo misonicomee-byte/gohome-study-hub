@@ -16,6 +16,14 @@ test("style rotation is deterministic and differs across channels", () => {
   assert.notDeepEqual(youtube, recommendStyle("blog", "2026-06", []));
 });
 
+test("Podcast style history is independent from the other channels", () => {
+  const history = [{ channel: "youtube", month: "2026-05", placement: "hook", motion: "cutout-zoom" }];
+  const style = recommendStyle("podcast", "2026-06", history);
+  const updated = recordStyle("podcast", "2026-06", style.placement, style.motion, history);
+  assert.equal(updated.filter((entry) => entry.channel === "podcast").length, 1);
+  assert.equal(updated.filter((entry) => entry.channel === "youtube").length, 1);
+});
+
 test("recordStyle keeps only the latest six entries per channel", () => {
   let history = [];
   for (let month = 1; month <= 8; month += 1) {

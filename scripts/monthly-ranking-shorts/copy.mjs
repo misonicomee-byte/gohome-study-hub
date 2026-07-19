@@ -4,12 +4,14 @@ const CHANNEL_LABELS = Object.freeze({
   youtube: "YouTube Shorts",
   blog: "ブログ",
   instagram: "Instagram",
+  podcast: "ポッドキャスト",
 });
 
 const CHANNEL_TAGS = Object.freeze({
   youtube: "#YouTubeShorts",
   blog: "#クリニックブログ",
   instagram: "#Instagram",
+  podcast: "#ポッドキャスト",
 });
 
 function japaneseMonth(month) {

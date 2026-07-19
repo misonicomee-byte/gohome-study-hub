@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-const CHANNELS = ["youtube", "blog", "instagram"];
+const CHANNELS = ["youtube", "blog", "instagram", "podcast"];
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -38,6 +38,18 @@ function isValidUrl(value) {
   } catch {
     return false;
   }
+}
+
+function isCanonicalPodcastUrl(value, kind) {
+  if (!isValidUrl(value)) return false;
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.search || url.hash) return false;
+  if (kind === "episode") {
+    return url.hostname === "podcasters.spotify.com"
+      && url.pathname.startsWith("/pod/show/go-ito/episodes/")
+      && url.pathname.length > "/pod/show/go-ito/episodes/".length;
+  }
+  return url.hostname === "d3t3ozftmdmh3i.cloudfront.net" && url.pathname.length > 1;
 }
 
 export function validateManifest(value) {
@@ -84,6 +96,12 @@ export function validateManifest(value) {
       || !Number.isFinite(item.metricValue)
       || !Number.isFinite(item.secondaryMetricValue)) {
       throw new Error(`invalid rank ${item.rank}`);
+    }
+    if (value.channel === "podcast" && !isCanonicalPodcastUrl(item.url, "episode")) {
+      throw new Error(`invalid Podcast Spotify URL for rank ${item.rank}`);
+    }
+    if (value.channel === "podcast" && !isCanonicalPodcastUrl(item.imageUrl, "image")) {
+      throw new Error(`invalid Podcast image URL for rank ${item.rank}`);
     }
   }
   return value;

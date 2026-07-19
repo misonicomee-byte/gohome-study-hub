@@ -3,13 +3,15 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collectBlogRanking } from "./blog.mjs";
 import { collectInstagramRanking } from "./instagram.mjs";
+import { collectPodcastRanking, PODCAST_RSS_URL } from "./podcast.mjs";
 import { periodFromMonth, previousMonthPeriod } from "./period.mjs";
 import { validateManifest, writeManifest } from "./schema.mjs";
 import { collectYouTubeRanking } from "./youtube.mjs";
 
 const CHANNEL_ID = "UCJ2B_z_pz0R_yTZkRbSl4Lg";
 const OAUTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-const OPTIONS = new Set(["--month", "--out"]);
+const CHANNELS = Object.freeze(["youtube", "blog", "instagram", "podcast"]);
+const OPTIONS = new Set(["--month", "--out", "--channel"]);
 const OAUTH_NETWORK_ERROR_CODES = new Set([
   "ECONNABORTED",
   "ECONNREFUSED",
@@ -62,10 +64,12 @@ function youtubeCredentialMode(env) {
   return { mode: "refresh", refreshToken, clientId, clientSecret };
 }
 
-function validateEnvironment(env) {
+function validateEnvironment(env, channels) {
+  const needsGas = channels.some((channel) => ["blog", "instagram", "podcast"].includes(channel));
+  const needsYouTube = channels.some((channel) => ["youtube", "podcast"].includes(channel));
   return {
-    gasUrl: requireGasUrl(env),
-    credentials: youtubeCredentialMode(env),
+    gasUrl: needsGas ? requireGasUrl(env) : null,
+    credentials: needsYouTube ? youtubeCredentialMode(env) : null,
   };
 }
 
@@ -83,6 +87,9 @@ export function parseCollectArgs(argv) {
       throw new Error(`CLI option ${option} requires a value`);
     }
     result[option.slice(2)] = value;
+  }
+  if (result.channel !== undefined && !CHANNELS.includes(result.channel)) {
+    throw new Error(`CLI option --channel must be one of ${CHANNELS.join(", ")}`);
   }
   return result;
 }
@@ -137,10 +144,9 @@ export async function resolveYouTubeAccessToken({ env, fetchImpl = fetch, creden
   return body.access_token.trim();
 }
 
-function requireChannelManifests(manifests) {
-  const expectedChannels = ["youtube", "blog", "instagram"];
+function requireChannelManifests(manifests, expectedChannels) {
   if (!Array.isArray(manifests) || manifests.length !== expectedChannels.length) {
-    throw new Error("collectors must return exactly three manifests");
+    throw new Error(`collectors must return exactly ${expectedChannels.length} manifests`);
   }
   for (const [index, manifest] of manifests.entries()) {
     validateManifest(manifest);
@@ -209,21 +215,26 @@ export async function runCollection({
   const args = parseCollectArgs(argv);
   const period = args.month ? periodFromMonth(args.month, now) : previousMonthPeriod(now);
   const out = resolve(args.out ?? join("output", "monthly-ranking", period.month));
-  const configuration = validateEnvironment(env);
-  const accessToken = await resolveYouTubeAccessToken({
-    env,
+  const selectedChannels = args.channel ? [args.channel] : [...CHANNELS];
+  const configuration = validateEnvironment(env, selectedChannels);
+  const accessToken = configuration.credentials
+    ? await resolveYouTubeAccessToken({ env, fetchImpl, credentials: configuration.credentials })
+    : null;
+  const availableCollectors = {
+    youtube: collectors.youtube ?? collectYouTubeRanking,
+    blog: collectors.blog ?? collectBlogRanking,
+    instagram: collectors.instagram ?? collectInstagramRanking,
+    podcast: collectors.podcast ?? collectPodcastRanking,
+  };
+  const manifests = await Promise.all(selectedChannels.map((channel) => availableCollectors[channel]({
+    accessToken,
+    channelId: CHANNEL_ID,
+    gasUrl: configuration.gasUrl,
+    rssUrl: PODCAST_RSS_URL,
+    period,
     fetchImpl,
-    credentials: configuration.credentials,
-  });
-  const youtubeCollector = collectors.youtube ?? collectYouTubeRanking;
-  const blogCollector = collectors.blog ?? collectBlogRanking;
-  const instagramCollector = collectors.instagram ?? collectInstagramRanking;
-  const manifests = await Promise.all([
-    youtubeCollector({ accessToken, channelId: CHANNEL_ID, period, fetchImpl }),
-    blogCollector({ gasUrl: configuration.gasUrl, period, fetchImpl }),
-    instagramCollector({ gasUrl: configuration.gasUrl, period, fetchImpl }),
-  ]);
-  requireChannelManifests(manifests);
+  })));
+  requireChannelManifests(manifests, selectedChannels);
   await writeStagedManifests(out, manifests, fileOps);
   return { out, period, manifests };
 }

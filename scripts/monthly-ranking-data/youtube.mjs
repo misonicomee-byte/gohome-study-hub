@@ -142,18 +142,35 @@ async function collectSnippets({ analyticsItems, fetchImpl, headers }) {
   return snippetsById;
 }
 
-export async function collectYouTubeRanking({ accessToken, channelId, period, fetchImpl = fetch }) {
-  const headers = { Authorization: `Bearer ${accessToken}` };
-  const allAnalyticsItems = await collectAnalyticsItems({
+function authorizationHeaders(accessToken) {
+  if (typeof accessToken !== "string" || !accessToken.trim()) throw new Error("YouTube access token is required");
+  return { Authorization: `Bearer ${accessToken.trim()}` };
+}
+
+export async function collectYouTubeAnalyticsItems({ accessToken, channelId, period, fetchImpl = fetch }) {
+  return collectAnalyticsItems({
     channelId,
     period,
     fetchImpl,
-    headers,
+    headers: authorizationHeaders(accessToken),
   });
+}
+
+export async function collectYouTubeSnippets({ accessToken, analyticsItems, fetchImpl = fetch }) {
+  if (!Array.isArray(analyticsItems)) throw new Error("YouTube analyticsItems must be an array");
+  return collectSnippets({
+    analyticsItems,
+    fetchImpl,
+    headers: authorizationHeaders(accessToken),
+  });
+}
+
+export async function collectYouTubeRanking({ accessToken, channelId, period, fetchImpl = fetch }) {
+  const allAnalyticsItems = await collectYouTubeAnalyticsItems({ accessToken, channelId, period, fetchImpl });
   const analyticsItems = allAnalyticsItems.filter(({ creatorContentType }) => creatorContentType === "SHORTS");
   if (analyticsItems.length < 3) throw new Error("YouTube returned fewer than 3 Shorts");
 
-  const snippetsById = await collectSnippets({ analyticsItems, fetchImpl, headers });
+  const snippetsById = await collectYouTubeSnippets({ accessToken, analyticsItems, fetchImpl });
   const items = analyticsItems
     .map((item) => ({ ...item, snippet: snippetsById.get(item.id) }))
     .sort((a, b) => b.views - a.views

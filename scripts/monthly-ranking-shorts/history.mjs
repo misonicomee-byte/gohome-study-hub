@@ -1,4 +1,4 @@
-const CHANNELS = Object.freeze(["youtube", "blog", "instagram"]);
+const CHANNELS = Object.freeze(["youtube", "blog", "instagram", "podcast"]);
 const CANDIDATES = Object.freeze([
   Object.freeze({ placement: "hook", motion: "cutout-zoom" }),
   Object.freeze({ placement: "chapter", motion: "split-reveal" }),

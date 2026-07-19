@@ -61,6 +61,23 @@ test("Instagram initial fallback is not described as a monthly increase", () => 
   assert.match(copy.postCaption, /月内の増加数ではありません/);
 });
 
+test("Podcast copy accurately describes monthly YouTube view growth as popularity", () => {
+  const copy = buildCopy({
+    ...manifest,
+    channel: "podcast",
+    rankingLabel: "前月（2026-06）中に増えたYouTube再生回数",
+    items: manifest.items.map((item, index) => ({
+      ...item,
+      url: `https://podcasters.spotify.com/pod/show/go-ito/episodes/episode-${index}`,
+      imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${index}.jpg`,
+    })),
+  });
+  assert.match(copy.postCaption, /ポッドキャスト 人気コンテンツTOP3/);
+  assert.match(copy.postCaption, /前月.*中に増えたYouTube再生回数/);
+  assert.match(copy.postCaption, /#ポッドキャスト/);
+  assert.doesNotMatch(copy.postCaption, /新着/);
+});
+
 test("rejects malformed periods, prototype channels, injection, claims, and unsafe URLs", () => {
   assert.throws(() => buildCopy({ ...manifest, channel: "constructor" }));
   assert.throws(() => buildCopy({ ...manifest, period: { ...manifest.period, endDate: "2026-06-29" } }));
