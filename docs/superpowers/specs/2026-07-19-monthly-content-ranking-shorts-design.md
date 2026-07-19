@@ -91,6 +91,7 @@
   "schemaVersion": 1,
   "channel": "youtube",
   "period": {
+    "month": "2026-06",
     "timezone": "Asia/Tokyo",
     "startDate": "2026-06-01",
     "endDate": "2026-06-30"
