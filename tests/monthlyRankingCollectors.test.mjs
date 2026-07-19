@@ -84,6 +84,31 @@ test("YouTube breaks equal monthly metrics by newest publish date then video id"
   assert.deepEqual(result.items.map((item) => item.contentId), ["c", "b", "a"]);
 });
 
+test("YouTube tie breaks use deterministic code-unit ordering", async () => {
+  const fetchImpl = async (url) => {
+    if (new URL(url).hostname === "youtubeanalytics.googleapis.com") {
+      return jsonResponse({ rows: [
+        ["Z", "SHORTS", 100, 20],
+        ["a", "SHORTS", 100, 20],
+        ["z", "SHORTS", 100, 20],
+      ] });
+    }
+    return jsonResponse({ items: [
+      detail("Z", "2026-02-01T00:00:00Z"),
+      detail("a", "2026-02-01T00:00:00Z"),
+      detail("z", "2026-02-01T00:00:00Z"),
+    ] });
+  };
+  const originalLocaleCompare = String.prototype.localeCompare;
+  String.prototype.localeCompare = () => { throw new Error("locale-dependent comparison used"); };
+  try {
+    const result = await collectYouTubeRanking({ accessToken: "test", channelId: "UCtest", period, fetchImpl });
+    assert.deepEqual(result.items.map((item) => item.contentId), ["z", "a", "Z"]);
+  } finally {
+    String.prototype.localeCompare = originalLocaleCompare;
+  }
+});
+
 test("YouTube fetches every Analytics page before resolving boundary ties", async () => {
   const analyticsStarts = [];
   const metadataBatchSizes = [];
@@ -249,6 +274,35 @@ test("YouTube rejects malformed Data API payloads", async (t) => {
       await assert.rejects(
         collectYouTubeRanking({ accessToken: "test", channelId: "UCtest", period, fetchImpl }),
         /invalid video metadata/i,
+      );
+    });
+  }
+});
+
+test("YouTube rejects date-prefixed junk and invalid publication timestamps", async (t) => {
+  const analyticsBody = { rows: [
+    ["a", "SHORTS", 30, 10],
+    ["b", "SHORTS", 20, 10],
+    ["c", "SHORTS", 10, 5],
+  ] };
+  const invalidPublishedAt = [
+    "2026-01-01",
+    "2026-01-01not-a-timestamp",
+    "2026-01-01T00:00:00Z trailing",
+    "2026-02-30T00:00:00Z",
+    "2026-01-01T24:00:00Z",
+    "2026-01-01T00:00:00+99:00",
+  ];
+
+  for (const publishedAt of invalidPublishedAt) {
+    await t.test(publishedAt, async () => {
+      const fetchImpl = async (url) => new URL(url).hostname === "youtubeanalytics.googleapis.com"
+        ? jsonResponse(analyticsBody)
+        : jsonResponse({ items: [detail("a", publishedAt), detail("b"), detail("c")] });
+
+      await assert.rejects(
+        collectYouTubeRanking({ accessToken: "test", channelId: "UCtest", period, fetchImpl }),
+        /invalid details/i,
       );
     });
   }

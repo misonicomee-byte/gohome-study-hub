@@ -14,10 +14,37 @@ function requireFiniteMetric(value, name) {
   return value;
 }
 
+function compareCodeUnits(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function isRfc3339Timestamp(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!match || !Number.isFinite(Date.parse(value))) return false;
+
+  const [, year, month, day, hour, minute, second, timezone] = match;
+  const parts = [year, month, day, hour, minute, second].map(Number);
+  const [numericYear, numericMonth, numericDay, numericHour, numericMinute, numericSecond] = parts;
+  const timezoneOffset = timezone === "Z"
+    ? 0
+    : (Number(timezone.slice(1, 3)) * 60) + Number(timezone.slice(4, 6));
+
+  if (numericMonth < 1 || numericMonth > 12
+    || numericHour > 23 || numericMinute > 59 || numericSecond > 59
+    || timezoneOffset > (23 * 60) + 59) return false;
+
+  const calendarDate = new Date(Date.UTC(numericYear, numericMonth - 1, numericDay));
+  return calendarDate.getUTCFullYear() === numericYear
+    && calendarDate.getUTCMonth() === numericMonth - 1
+    && calendarDate.getUTCDate() === numericDay;
+}
+
 function requireSnippet(id, snippet) {
   if (!snippet || typeof snippet !== "object" || Array.isArray(snippet)
     || typeof snippet.title !== "string" || !snippet.title.trim()
-    || typeof snippet.publishedAt !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(snippet.publishedAt)) {
+    || typeof snippet.publishedAt !== "string" || !isRfc3339Timestamp(snippet.publishedAt)) {
     throw new Error(`YouTube returned invalid details for video ${id}`);
   }
   return snippet;
@@ -131,8 +158,8 @@ export async function collectYouTubeRanking({ accessToken, channelId, period, fe
     .map((item) => ({ ...item, snippet: snippetsById.get(item.id) }))
     .sort((a, b) => b.views - a.views
       || b.engagedViews - a.engagedViews
-      || b.snippet.publishedAt.localeCompare(a.snippet.publishedAt)
-      || b.id.localeCompare(a.id))
+      || compareCodeUnits(b.snippet.publishedAt, a.snippet.publishedAt)
+      || compareCodeUnits(b.id, a.id))
     .slice(0, 3)
     .map((item, index) => ({
       rank: index + 1,
