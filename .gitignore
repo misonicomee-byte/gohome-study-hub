@@ -8,12 +8,17 @@ output/
 
 # dependencies
 node_modules/
+.worktrees/
 
 # logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Python test caches
+__pycache__/
+*.py[cod]
 
 
 # environment variables

@@ -51,7 +51,7 @@ export interface InstagramPost {
 // （旧経路: XServer WAFがGitHub Actionsの米国IPを403で遮断するため、
 //  日本国内NAS 共有スプレッドシート → GAS の構成だったが、現在は GA4 ベース）。
 const GAS_URL =
-  "https://script.google.com/macros/s/AKfycbzfTC0-0D9DB_odgG7OLkJ7cBI0vKaZdcaRAv3rx612t9pLSJR59gcsiUPCx7MSay-2/exec";
+  "https://script.google.com/macros/s/AKfycbzSApigqDvEX1Kngc5sHEfm7WdXpJxu2vcHXx6ynGGJ2mgToc1Vh0K0D02gI51HrICR/exec";
 
 const FETCH_OPTS: RequestInit = {
   headers: {
@@ -72,43 +72,92 @@ const FETCH_OPTS: RequestInit = {
  * gohome-clinic.com の /YYYY/MM/DD/ パターンURLが対象
  */
 let _blogCache: BlogPost[] | null = null;
+let _blogCachePromise: Promise<BlogPost[]> | null = null;
+
+export function rollingBlogDateRange(now = new Date()) {
+  const dateParts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(now)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  const endDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+  const start = new Date(0);
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCFullYear(
+    Number(dateParts.year),
+    Number(dateParts.month) - 1,
+    Number(dateParts.day),
+  );
+  start.setUTCDate(start.getUTCDate() - 179);
+  return { startDate: start.toISOString().slice(0, 10), endDate };
+}
+
 async function fetchBlogFromGAS(): Promise<BlogPost[]> {
   if (_blogCache) return _blogCache;
+  if (_blogCachePromise) return _blogCachePromise;
+  _blogCachePromise = (async () => {
+    try {
+      const { startDate, endDate } = rollingBlogDateRange();
+      const url = new URL(GAS_URL);
+      url.search = new URLSearchParams({
+        api: "blog-ranking",
+        startDate,
+        endDate,
+        limit: "100",
+      });
+      let json: any = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const res = await fetch(url, FETCH_OPTS);
+        if (!res.ok) {
+          console.warn(`[portal] blog GAS fetch failed: status=${res.status}`);
+          return [];
+        }
+        const text = await res.text();
+        if (text.startsWith("<!") || text.startsWith("<html")) {
+          console.warn(
+            "[portal] blog GAS returned HTML (deployment may require auth)",
+          );
+          return [];
+        }
+        json = JSON.parse(text);
+        if (!json.error) break;
+        const retryable = json.errorCode === "UPSTREAM_UNAVAILABLE";
+        if (!retryable || attempt === 2) {
+          console.warn("[portal] blog GAS error:", json.error);
+          return [];
+        }
+        await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 2_000));
+      }
+      const data = json.data ?? [];
+      console.log(`[portal] blog from GAS OK: ${data.length} posts`);
+      _blogCache = data.map((p: any) => ({
+        id: p.url, // GA4ベースのため数値IDなし、URLをIDとして利用
+        title: String(p.title ?? ""),
+        link: String(p.url ?? ""),
+        date: String(p.date ?? ""),
+        excerpt: "",
+        thumbnail: null,
+        categories: [],
+        tags: [],
+        pageViews: Number(p.pageViews ?? 0),
+        totalUsers: Number(p.totalUsers ?? 0),
+      })) as BlogPost[];
+      return _blogCache;
+    } catch (err) {
+      console.warn("[portal] blog GAS fetch failed:", err);
+      return [];
+    }
+  })();
   try {
-    const url = `${GAS_URL}?api=blog-ranking&days=180&limit=100`;
-    const res = await fetch(url, FETCH_OPTS);
-    if (!res.ok) {
-      console.warn(`[portal] blog GAS fetch failed: status=${res.status}`);
-      return [];
-    }
-    const text = await res.text();
-    if (text.startsWith("<!") || text.startsWith("<html")) {
-      console.warn("[portal] blog GAS returned HTML (deployment may require auth)");
-      return [];
-    }
-    const json = JSON.parse(text);
-    if (json.error) {
-      console.warn("[portal] blog GAS error:", json.error);
-      return [];
-    }
-    const data = json.data ?? [];
-    console.log(`[portal] blog from GAS OK: ${data.length} posts`);
-    _blogCache = data.map((p: any) => ({
-      id: p.url, // GA4ベースのため数値IDなし、URLをIDとして利用
-      title: String(p.title ?? ""),
-      link: String(p.url ?? ""),
-      date: String(p.date ?? ""),
-      excerpt: "",
-      thumbnail: null,
-      categories: [],
-      tags: [],
-      pageViews: Number(p.pageViews ?? 0),
-      totalUsers: Number(p.totalUsers ?? 0),
-    })) as BlogPost[];
-    return _blogCache;
-  } catch (err) {
-    console.warn("[portal] blog GAS fetch failed:", err);
-    return [];
+    return await _blogCachePromise;
+  } finally {
+    if (!_blogCache) _blogCachePromise = null;
   }
 }
 
@@ -123,7 +172,9 @@ export async function fetchLatestBlogPosts(limit = 6): Promise<BlogPost[]> {
  * 直近のInstagram投稿 n件をinsights付きで取得
  * GAS deployment が public access になっていない場合はHTMLが返るので空配列を返す
  */
-export async function fetchInstagramPosts(limit = 30): Promise<InstagramPost[]> {
+export async function fetchInstagramPosts(
+  limit = 30,
+): Promise<InstagramPost[]> {
   try {
     const url = `${GAS_URL}?api=instagram-posts&limit=${limit}`;
     const res = await fetch(url, FETCH_OPTS);
@@ -131,7 +182,7 @@ export async function fetchInstagramPosts(limit = 30): Promise<InstagramPost[]> 
     const text = await res.text();
     if (text.startsWith("<!") || text.startsWith("<html")) {
       console.warn(
-        "[portal] Instagram API returned HTML (deployment may require auth — set webapp access to 'Anyone' in GAS UI)"
+        "[portal] Instagram API returned HTML (deployment may require auth — set webapp access to 'Anyone' in GAS UI)",
       );
       return [];
     }
@@ -160,14 +211,20 @@ export async function fetchPopularBlogPosts(limit = 6): Promise<BlogPost[]> {
 /**
  * 人気Instagram投稿 — like_count降順
  */
-export function rankByLikes(posts: InstagramPost[], limit = 6): InstagramPost[] {
+export function rankByLikes(
+  posts: InstagramPost[],
+  limit = 6,
+): InstagramPost[] {
   return [...posts].sort((a, b) => b.like_count - a.like_count).slice(0, limit);
 }
 
 /**
  * 人気Instagram投稿 — エンゲージメント率（like+comment+saved）/ reach 降順
  */
-export function rankByEngagementRate(posts: InstagramPost[], limit = 6): InstagramPost[] {
+export function rankByEngagementRate(
+  posts: InstagramPost[],
+  limit = 6,
+): InstagramPost[] {
   return [...posts]
     .map((p) => ({
       ...p,
@@ -199,20 +256,61 @@ function cleanHtml(text: string): string {
  * Podcast一覧をGAS経由で取得し、タイトルからジャンルを自動分類
  */
 const GENRE_KEYWORDS: Array<{ name: string; patterns: RegExp[] }> = [
-  { name: "嚥下・栄養", patterns: [/嚥下|食[べ事]|栄養|食欲|低栄養|フレイル|サルコペニア|管理栄養士|食形態/, /【嚥下/, /【栄養/] },
-  { name: "感染症", patterns: [/感染|尿路|肺炎|発熱|抗菌薬|耐性菌|敗血症|消毒|清潔/] },
+  {
+    name: "嚥下・栄養",
+    patterns: [
+      /嚥下|食[べ事]|栄養|食欲|低栄養|フレイル|サルコペニア|管理栄養士|食形態/,
+      /【嚥下/,
+      /【栄養/,
+    ],
+  },
+  {
+    name: "感染症",
+    patterns: [/感染|尿路|肺炎|発熱|抗菌薬|耐性菌|敗血症|消毒|清潔/],
+  },
   { name: "皮膚・褥瘡", patterns: [/皮膚|褥瘡|スキン|湿疹|皮膚科|肌|傷|創/] },
-  { name: "排泄ケア", patterns: [/排尿|排便|尿|便|失禁|オムツ|カテーテル|トイレ|膀胱|便秘|下痢/] },
+  {
+    name: "排泄ケア",
+    patterns: [/排尿|排便|尿|便|失禁|オムツ|カテーテル|トイレ|膀胱|便秘|下痢/],
+  },
   { name: "認知症", patterns: [/認知症|BPSD|物忘れ|徘徊|せん妄|MCI/] },
-  { name: "メンタル", patterns: [/うつ|心の|精神|不安|気持ち|心理|孤独|ストレス|傾聴/] },
-  { name: "看取り・ACP", patterns: [/看取り|終末|ACP|人生会議|延命|意思決定|尊厳|最期|臨終|死/] },
-  { name: "糖尿病・生活習慣", patterns: [/糖尿|血糖|HbA1c|インスリン|高血圧|脂質|肥満|フット/] },
-  { name: "心疾患・呼吸器", patterns: [/心不全|心疾患|不整脈|呼吸|COPD|喘息|肺|心臓/] },
+  {
+    name: "メンタル",
+    patterns: [/うつ|心の|精神|不安|気持ち|心理|孤独|ストレス|傾聴/],
+  },
+  {
+    name: "看取り・ACP",
+    patterns: [/看取り|終末|ACP|人生会議|延命|意思決定|尊厳|最期|臨終|死/],
+  },
+  {
+    name: "糖尿病・生活習慣",
+    patterns: [/糖尿|血糖|HbA1c|インスリン|高血圧|脂質|肥満|フット/],
+  },
+  {
+    name: "心疾患・呼吸器",
+    patterns: [/心不全|心疾患|不整脈|呼吸|COPD|喘息|肺|心臓/],
+  },
   { name: "点滴・輸液", patterns: [/点滴|輸液|皮下|脱水|補液|【点滴/] },
-  { name: "薬剤管理", patterns: [/服薬|薬剤|処方|薬|残薬|副作用|相互作用|薬剤師/] },
-  { name: "多職種連携", patterns: [/連携|多職種|チーム|ケアマネ|訪問看護|薬剤師|理学療法|作業療法|歯科|地域包括/] },
-  { name: "家族介護", patterns: [/家族|介護者|介護負担|レスパイト|介護家族|ヤングケアラー|遠距離介護|独居/] },
-  { name: "制度・算定", patterns: [/算定|改定|加算|診療報酬|介護報酬|施設基準|【2026/] },
+  {
+    name: "薬剤管理",
+    patterns: [/服薬|薬剤|処方|薬|残薬|副作用|相互作用|薬剤師/],
+  },
+  {
+    name: "多職種連携",
+    patterns: [
+      /連携|多職種|チーム|ケアマネ|訪問看護|薬剤師|理学療法|作業療法|歯科|地域包括/,
+    ],
+  },
+  {
+    name: "家族介護",
+    patterns: [
+      /家族|介護者|介護負担|レスパイト|介護家族|ヤングケアラー|遠距離介護|独居/,
+    ],
+  },
+  {
+    name: "制度・算定",
+    patterns: [/算定|改定|加算|診療報酬|介護報酬|施設基準|【2026/],
+  },
   { name: "特集", patterns: [/^【.+特集】/] },
 ];
 
@@ -256,7 +354,9 @@ export async function fetchPodcastList(): Promise<PodcastEpisode[]> {
       genres: detectGenres(String(p.title || "")),
       number: extractNumber(String(p.title || "")),
     })) as PodcastEpisode[];
-    console.log(`[portal] podcast from GAS OK: ${_podcastCache?.length} episodes`);
+    console.log(
+      `[portal] podcast from GAS OK: ${_podcastCache?.length} episodes`,
+    );
     return _podcastCache!;
   } catch (err) {
     console.warn("[portal] podcast fetch failed:", err);
@@ -264,7 +364,9 @@ export async function fetchPodcastList(): Promise<PodcastEpisode[]> {
   }
 }
 
-export function getPodcastGenres(eps: PodcastEpisode[]): { name: string; count: number }[] {
+export function getPodcastGenres(
+  eps: PodcastEpisode[],
+): { name: string; count: number }[] {
   const counts = new Map<string, number>();
   for (const ep of eps) {
     for (const g of ep.genres) {
@@ -288,7 +390,9 @@ export async function fetchLectureViewCounts(
   const apiKey =
     import.meta.env.YOUTUBE_API_KEY ?? process.env.YOUTUBE_API_KEY ?? "";
   if (!apiKey) {
-    console.warn("[portal] YOUTUBE_API_KEY 未設定 — WEB勉強会ランキングをスキップ");
+    console.warn(
+      "[portal] YOUTUBE_API_KEY 未設定 — WEB勉強会ランキングをスキップ",
+    );
     return result;
   }
   const ids = youtubeIds.filter(Boolean);
@@ -305,7 +409,10 @@ export async function fetchLectureViewCounts(
     }
     const json = await res.json();
     if (json.error) {
-      console.warn("[portal] YouTube API error:", json.error?.message ?? json.error);
+      console.warn(
+        "[portal] YouTube API error:",
+        json.error?.message ?? json.error,
+      );
       return result;
     }
     for (const item of json.items ?? []) {
@@ -327,7 +434,11 @@ const YOUTUBE_UPLOADS_PLAYLIST_ID = `UU${YOUTUBE_CHANNEL_ID.slice(2)}`;
 function parseIsoDurationSeconds(value: string): number {
   const match = value.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
   if (!match) return Number.POSITIVE_INFINITY;
-  return Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
+  return (
+    Number(match[1] ?? 0) * 3600 +
+    Number(match[2] ?? 0) * 60 +
+    Number(match[3] ?? 0)
+  );
 }
 
 function formatDuration(seconds: number): string {
@@ -340,7 +451,9 @@ function formatDuration(seconds: number): string {
  * YouTube Data APIにはShorts専用フラグがないため、現在のShorts上限に合わせて
  * 3分以内の公開動画を対象とする。毎朝のGitHub Actionsビルドで再取得される。
  */
-export async function fetchPopularYouTubeShorts(limit = 5): Promise<YouTubeShort[]> {
+export async function fetchPopularYouTubeShorts(
+  limit = 5,
+): Promise<YouTubeShort[]> {
   const apiKey =
     import.meta.env.YOUTUBE_API_KEY ?? process.env.YOUTUBE_API_KEY ?? "";
   const fallback = () =>
@@ -349,7 +462,9 @@ export async function fetchPopularYouTubeShorts(limit = 5): Promise<YouTubeShort
       .slice(0, limit);
 
   if (!apiKey) {
-    console.warn("[portal] YOUTUBE_API_KEY 未設定 — Shortsランキングは確認済みデータを使用");
+    console.warn(
+      "[portal] YOUTUBE_API_KEY 未設定 — Shortsランキングは確認済みデータを使用",
+    );
     return fallback();
   }
 
@@ -364,7 +479,9 @@ export async function fetchPopularYouTubeShorts(limit = 5): Promise<YouTubeShort
         (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
       const playlistRes = await fetch(playlistUrl);
       if (!playlistRes.ok) {
-        console.warn(`[portal] YouTube uploads fetch failed: status=${playlistRes.status}`);
+        console.warn(
+          `[portal] YouTube uploads fetch failed: status=${playlistRes.status}`,
+        );
         return fallback();
       }
       const playlistJson = await playlistRes.json();
@@ -398,7 +515,9 @@ export async function fetchPopularYouTubeShorts(limit = 5): Promise<YouTubeShort
     const shorts = videoResponses
       .flatMap((json: any) => json.items ?? [])
       .map((item: any) => {
-        const seconds = parseIsoDurationSeconds(String(item.contentDetails?.duration ?? ""));
+        const seconds = parseIsoDurationSeconds(
+          String(item.contentDetails?.duration ?? ""),
+        );
         return {
           youtubeId: String(item.id ?? ""),
           title: String(item.snippet?.title ?? ""),
@@ -407,7 +526,9 @@ export async function fetchPopularYouTubeShorts(limit = 5): Promise<YouTubeShort
           fallbackViews: Number(item.statistics?.viewCount ?? 0),
           seconds,
           privacyStatus: String(item.status?.privacyStatus ?? ""),
-          liveBroadcastContent: String(item.snippet?.liveBroadcastContent ?? "none"),
+          liveBroadcastContent: String(
+            item.snippet?.liveBroadcastContent ?? "none",
+          ),
         };
       })
       .filter(
@@ -421,9 +542,18 @@ export async function fetchPopularYouTubeShorts(limit = 5): Promise<YouTubeShort
       )
       .sort((a: any, b: any) => b.fallbackViews - a.fallbackViews)
       .slice(0, limit)
-      .map(({ seconds: _seconds, privacyStatus: _privacy, liveBroadcastContent: _live, ...item }: any) => item as YouTubeShort);
+      .map(
+        ({
+          seconds: _seconds,
+          privacyStatus: _privacy,
+          liveBroadcastContent: _live,
+          ...item
+        }: any) => item as YouTubeShort,
+      );
 
-    console.log(`[portal] YouTube Shorts ranking OK: ${shorts.length} videos from ${ids.length} uploads`);
+    console.log(
+      `[portal] YouTube Shorts ranking OK: ${shorts.length} videos from ${ids.length} uploads`,
+    );
     return shorts.length > 0 ? shorts : fallback();
   } catch (err) {
     console.warn("[portal] YouTube Shorts fetch failed:", err);

@@ -1,0 +1,113 @@
+name: Monthly ranking Shorts drafts
+
+on:
+  schedule:
+    - cron: "0 0 * * 0" # Every Sunday at 09:00 JST; pilot guard is disabled by default.
+  workflow_dispatch:
+    inputs:
+      month:
+        description: Target completed month in YYYY-MM
+        required: true
+        type: string
+      channel:
+        description: Generate exactly one draft channel
+        required: true
+        type: choice
+        options:
+          - youtube
+          - blog
+          - instagram
+          - podcast
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_MONTHLY_RANKING_SCHEDULE == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.select.outputs.channel }}
+      month: ${{ steps.select.outputs.month }}
+      skip: ${{ steps.select.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_MONTH: ${{ inputs.month }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            channel="$INPUT_CHANNEL"
+            month="$INPUT_MONTH"
+            skip=false
+          else
+            day="$(TZ=Asia/Tokyo date +%-d)"
+            # 第5日曜は予備でskip。第1日曜が1〜4日ならAnalytics媒体を後ろへ送る。
+            JST_DAY="$day" node --input-type=module <<'NODE'
+            import { appendFileSync } from "node:fs";
+            import { selectScheduledChannel } from "./scripts/monthly-ranking-shorts/orchestrate.mjs";
+            const selected = selectScheduledChannel(Number(process.env.JST_DAY));
+            appendFileSync(process.env.GITHUB_OUTPUT, `channel=${selected.channel}\nskip=${selected.skip}\n`);
+          NODE
+            first_day="$(TZ=Asia/Tokyo date +%Y-%m-01)"
+            month="$(TZ=Asia/Tokyo date -d "$first_day -1 month" +%Y-%m)"
+            printf 'month=%s\n' "$month" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            printf 'channel=%s\nmonth=%s\nskip=%s\n' "$channel" "$month" "$skip" >> "$GITHUB_OUTPUT"
+          fi
+
+  render:
+    needs: select
+    if: needs.select.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-ipafont-gothic
+      - run: npm ci
+      - run: python -m pip install -r scripts/ranking-shorts-renderer/requirements.txt
+      - run: npm test
+      - run: PYTHONPATH=scripts/ranking-shorts-renderer python -m unittest discover -s scripts/ranking-shorts-renderer/tests -v
+      - name: Generate one review draft
+        env:
+          CONTENT_ANALYTICS_GAS_URL: ${{ vars.CONTENT_ANALYTICS_GAS_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          RANKING_SHORTS_BGM_LICENSE_CONFIRMED: "true"
+          RANKING_SHORTS_BGM_YOUTUBE: assets/monthly-ranking-shorts/bgm/youtube-stable-audio.m4a
+          RANKING_SHORTS_BGM_INSTAGRAM: assets/monthly-ranking-shorts/bgm/instagram-stable-audio.m4a
+          RANKING_SHORTS_BGM_BLOG: assets/monthly-ranking-shorts/bgm/blog-stable-audio.m4a
+          RANKING_SHORTS_BGM_PODCAST: assets/monthly-ranking-shorts/bgm/podcast-stable-audio.m4a
+          RANKING_SHORTS_SEEDANCE: assets/monthly-ranking-shorts/motion/ranking-seedance.mp4
+        run: |
+          npm run ranking:shorts -- \
+            --month "${{ needs.select.outputs.month }}" \
+            --channel "${{ needs.select.outputs.channel }}" \
+            --out "output/monthly-ranking/${{ needs.select.outputs.month }}-${{ needs.select.outputs.channel }}"
+      - name: Package immutable review draft
+        if: always()
+        run: |
+          target="${{ needs.select.outputs.month }}-${{ needs.select.outputs.channel }}"
+          if [[ -e "output/monthly-ranking/$target" || -L "output/monthly-ranking/$target" ]]; then
+            tar --dereference -czf "$target.tar.gz" -C output/monthly-ranking "$target"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monthly-ranking-shorts-${{ needs.select.outputs.month }}-${{ needs.select.outputs.channel }}
+          path: ${{ needs.select.outputs.month }}-${{ needs.select.outputs.channel }}.tar.gz
+          if-no-files-found: warn
+          retention-days: 30
