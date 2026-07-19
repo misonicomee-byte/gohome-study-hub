@@ -109,6 +109,15 @@ function handleApiRequest_(params) {
         result = getBlogRankingFromGA4_(startDate, endDate, limit);
         break;
       }
+      case "instagram-monthly-ranking": {
+        const month = String(params.month || "");
+        if (!isValidYearMonth_(month)) {
+          throw new Error("month must be YYYY-MM");
+        }
+        const limit = parseApiLimit_(params.limit, 3, 100);
+        result = getInstagramMonthlyRanking_(month, limit);
+        break;
+      }
       default:
         result = { error: "Unknown api: " + params.api };
     }
@@ -146,6 +155,12 @@ function isValidIsoDate_(value) {
   var isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   if (isLeapYear) daysByMonth[1] = 29;
   return day <= daysByMonth[month - 1];
+}
+
+function isValidYearMonth_(value) {
+  var match = /^(\d{4})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  return Number(match[1]) >= 1 && Number(match[2]) >= 1 && Number(match[2]) <= 12;
 }
 
 function include(filename) {
@@ -383,6 +398,236 @@ function getInstagramPostsWithInsights(limit) {
   });
 
   return { data: postsWithInsights, count: postsWithInsights.length };
+}
+
+// ===== INSTAGRAM DAILY SNAPSHOTS =====
+var INSTAGRAM_SNAPSHOT_SHEET_ = "instagram_daily";
+var INSTAGRAM_SNAPSHOT_HEADERS_ = [
+  "snapshotDate",
+  "mediaId",
+  "timestamp",
+  "permalink",
+  "caption",
+  "mediaType",
+  "views",
+  "reach",
+  "totalInteractions",
+  "saved",
+  "shares",
+];
+
+function validateInstagramSnapshotSchema_(headers) {
+  if (!Array.isArray(headers) || headers.length < INSTAGRAM_SNAPSHOT_HEADERS_.length) {
+    throw new Error("Instagram snapshot sheet schema is invalid");
+  }
+  for (var i = 0; i < INSTAGRAM_SNAPSHOT_HEADERS_.length; i += 1) {
+    if (String(headers[i]) !== INSTAGRAM_SNAPSHOT_HEADERS_[i]) {
+      throw new Error("Instagram snapshot sheet schema is invalid");
+    }
+  }
+}
+
+function getInstagramSnapshotSheet_(spreadsheet) {
+  var sheet = spreadsheet.getSheetByName(INSTAGRAM_SNAPSHOT_SHEET_);
+  if (!sheet) throw new Error("instagram_daily snapshot sheet is missing");
+  return sheet;
+}
+
+function safeSnapshotMetric_(value) {
+  var numeric = typeof value === "number" ||
+      (typeof value === "string" && value.trim() !== "")
+    ? Number(value)
+    : NaN;
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+}
+
+function setupInstagramSnapshotStore() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID");
+  var spreadsheet = id
+    ? SpreadsheetApp.openById(id)
+    : SpreadsheetApp.create("Instagram content snapshots");
+
+  if (!id) {
+    id = spreadsheet.getId();
+    props.setProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID", id);
+  }
+
+  var sheet = spreadsheet.getSheetByName(INSTAGRAM_SNAPSHOT_SHEET_) ||
+    spreadsheet.insertSheet(INSTAGRAM_SNAPSHOT_SHEET_);
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(INSTAGRAM_SNAPSHOT_HEADERS_);
+  } else {
+    validateInstagramSnapshotSchema_(
+      sheet.getRange(1, 1, 1, INSTAGRAM_SNAPSHOT_HEADERS_.length).getValues()[0]
+    );
+  }
+
+  var dailyTriggers = ScriptApp.getProjectTriggers().filter(function (trigger) {
+    return trigger.getHandlerFunction() === "runDailyInstagramSnapshot";
+  });
+  dailyTriggers.forEach(function (trigger) {
+    ScriptApp.deleteTrigger(trigger);
+  });
+  ScriptApp.newTrigger("runDailyInstagramSnapshot")
+    .timeBased()
+    .everyDays(1)
+    .atHour(6)
+    .create();
+
+  return { spreadsheetId: id, sheet: sheet.getName() };
+}
+
+function runDailyInstagramSnapshot() {
+  var id = PropertiesService.getScriptProperties()
+    .getProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID");
+  if (!id) throw new Error("Run setupInstagramSnapshotStore first");
+
+  var sheet = getInstagramSnapshotSheet_(SpreadsheetApp.openById(id));
+  if (sheet.getLastRow() === 0) {
+    throw new Error("Instagram snapshot sheet schema is missing");
+  }
+  validateInstagramSnapshotSchema_(
+    sheet.getRange(1, 1, 1, INSTAGRAM_SNAPSHOT_HEADERS_.length).getValues()[0]
+  );
+
+  var posts = getInstagramPostsWithInsights(100);
+  if (!posts || posts.error) {
+    throw new Error(posts && posts.error ? posts.error : "Instagram snapshot API failed");
+  }
+  if (!Array.isArray(posts.data)) {
+    throw new Error("Instagram snapshot API returned invalid data");
+  }
+
+  var snapshotDate = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var rows = posts.data.map(function (post) {
+    if (!post || post.id === undefined || post.id === null || String(post.id) === "") {
+      throw new Error("Instagram snapshot post is missing a media id");
+    }
+    return [
+      snapshotDate,
+      String(post.id),
+      String(post.timestamp || ""),
+      String(post.permalink || ""),
+      String(post.caption || ""),
+      String(post.media_type || ""),
+      safeSnapshotMetric_(post.views),
+      safeSnapshotMetric_(post.reach),
+      safeSnapshotMetric_(post.total_interactions),
+      safeSnapshotMetric_(post.saved),
+      safeSnapshotMetric_(post.shares),
+    ];
+  });
+
+  if (rows.length) {
+    sheet.getRange(
+      sheet.getLastRow() + 1,
+      1,
+      rows.length,
+      INSTAGRAM_SNAPSHOT_HEADERS_.length
+    ).setValues(rows);
+  }
+  return { snapshotDate: snapshotDate, rowsAppended: rows.length };
+}
+
+function getInstagramMonthlyRanking_(month, limit) {
+  if (!isValidYearMonth_(month)) throw new Error("month must be YYYY-MM");
+  limit = parseApiLimit_(limit, 3, 100);
+
+  var id = PropertiesService.getScriptProperties()
+    .getProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID");
+  if (!id) throw new Error("Instagram snapshot store is not configured");
+
+  var sheet = getInstagramSnapshotSheet_(SpreadsheetApp.openById(id));
+  var values = sheet.getDataRange().getValues();
+  if (!values.length) throw new Error("Instagram snapshot sheet schema is missing");
+  var headers = values.shift();
+  validateInstagramSnapshotSchema_(headers);
+
+  var index = {};
+  headers.forEach(function (name, headerIndex) {
+    index[String(name)] = headerIndex;
+  });
+
+  var parts = month.split("-").map(Number);
+  var startDate = month + "-01";
+  var boundarySnapshotDate = Utilities.formatDate(
+    new Date(Date.UTC(parts[0], parts[1], 1)),
+    "UTC",
+    "yyyy-MM-dd"
+  );
+  var endDate = Utilities.formatDate(
+    new Date(Date.UTC(parts[0], parts[1], 0)),
+    "UTC",
+    "yyyy-MM-dd"
+  );
+  var byDate = Object.create(null);
+
+  values.forEach(function (row) {
+    var date = String(row[index.snapshotDate]);
+    if (date !== startDate && date !== boundarySnapshotDate) return;
+    var mediaId = String(row[index.mediaId] === undefined || row[index.mediaId] === null
+      ? ""
+      : row[index.mediaId]);
+    if (!mediaId) return;
+    if (!byDate[date]) byDate[date] = Object.create(null);
+    // Append-only rows are chronological, so assignment makes the latest capture win.
+    byDate[date][mediaId] = row;
+  });
+
+  if (!byDate[startDate] || !byDate[boundarySnapshotDate]) {
+    throw new Error("Complete month boundary snapshots are required");
+  }
+
+  var rows = Object.keys(byDate[boundarySnapshotDate])
+    .filter(function (mediaId) {
+      return Object.prototype.hasOwnProperty.call(byDate[startDate], mediaId);
+    })
+    .map(function (mediaId) {
+      var first = byDate[startDate][mediaId];
+      var last = byDate[boundarySnapshotDate][mediaId];
+      return {
+        id: mediaId,
+        timestamp: String(last[index.timestamp] || ""),
+        permalink: String(last[index.permalink] || ""),
+        caption: String(last[index.caption] || ""),
+        media_type: String(last[index.mediaType] || ""),
+        viewsDelta: Math.max(
+          0,
+          safeSnapshotMetric_(last[index.views]) - safeSnapshotMetric_(first[index.views])
+        ),
+        totalInteractionsDelta: Math.max(
+          0,
+          safeSnapshotMetric_(last[index.totalInteractions]) -
+            safeSnapshotMetric_(first[index.totalInteractions])
+        ),
+      };
+    });
+
+  rows.sort(function (a, b) {
+    var metricDifference = b.viewsDelta - a.viewsDelta ||
+      b.totalInteractionsDelta - a.totalInteractionsDelta;
+    if (metricDifference) return metricDifference;
+
+    var aTime = Date.parse(a.timestamp);
+    var bTime = Date.parse(b.timestamp);
+    aTime = Number.isFinite(aTime) ? aTime : Number.NEGATIVE_INFINITY;
+    bTime = Number.isFinite(bTime) ? bTime : Number.NEGATIVE_INFINITY;
+    if (bTime !== aTime) return bTime - aTime;
+    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+  });
+
+  return {
+    data: rows.slice(0, limit),
+    period: {
+      month: month,
+      startDate: startDate,
+      endDate: endDate,
+      timezone: "Asia/Tokyo",
+      boundarySnapshotDate: boundarySnapshotDate,
+    },
+    partial: false,
+  };
 }
 
 // ===== GA4 API =====

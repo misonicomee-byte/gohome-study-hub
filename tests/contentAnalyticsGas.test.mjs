@@ -48,6 +48,110 @@ function callJsonApi(context, params) {
   return JSON.parse(response.content);
 }
 
+const snapshotHeaders = [
+  "snapshotDate",
+  "mediaId",
+  "timestamp",
+  "permalink",
+  "caption",
+  "mediaType",
+  "views",
+  "reach",
+  "totalInteractions",
+  "saved",
+  "shares",
+];
+
+function createSheet(initialRows = [], name = "instagram_daily") {
+  const rows = initialRows.map((row) => [...row]);
+  return {
+    rows,
+    getName() { return name; },
+    getLastRow() { return rows.length; },
+    appendRow(row) { rows.push([...row]); },
+    getDataRange() {
+      return { getValues() { return rows.map((row) => [...row]); } };
+    },
+    getRange(row, column, rowCount, columnCount) {
+      assert.equal(column, 1);
+      return {
+        getValues() {
+          return rows.slice(row - 1, row - 1 + rowCount)
+            .map((value) => value.slice(0, columnCount));
+        },
+        setValues(values) {
+          for (let index = 0; index < values.length; index += 1) {
+            rows[row - 1 + index] = [...values[index]];
+          }
+        },
+      };
+    },
+  };
+}
+
+function createSnapshotHarness({
+  id = "snapshot-spreadsheet",
+  sheet = createSheet([snapshotHeaders]),
+  triggers = [],
+} = {}) {
+  const properties = new Map();
+  if (id) properties.set("CONTENT_SNAPSHOT_SPREADSHEET_ID", id);
+  const spreadsheet = {
+    getId() { return "created-spreadsheet"; },
+    getSheetByName(name) { return name === "instagram_daily" ? sheet : null; },
+    insertSheet() { return sheet; },
+  };
+  let createCalls = 0;
+  let openCalls = 0;
+  let triggerCreateCalls = 0;
+  const createdTriggerSchedules = [];
+  const activeTriggers = [...triggers];
+  const overrides = {
+    PropertiesService: {
+      getScriptProperties() {
+        return {
+          getProperty(name) { return properties.get(name) || null; },
+          setProperty(name, value) { properties.set(name, value); },
+        };
+      },
+    },
+    SpreadsheetApp: {
+      create() { createCalls += 1; return spreadsheet; },
+      openById() { openCalls += 1; return spreadsheet; },
+    },
+    ScriptApp: {
+      getProjectTriggers() { return [...activeTriggers]; },
+      deleteTrigger(trigger) {
+        const index = activeTriggers.indexOf(trigger);
+        if (index >= 0) activeTriggers.splice(index, 1);
+      },
+      newTrigger(handler) {
+        const schedule = { handler };
+        return {
+          timeBased() { return this; },
+          everyDays(days) { schedule.everyDays = days; return this; },
+          atHour(hour) { schedule.atHour = hour; return this; },
+          create() {
+            triggerCreateCalls += 1;
+            createdTriggerSchedules.push({ ...schedule });
+            activeTriggers.push({ getHandlerFunction() { return handler; } });
+          },
+        };
+      },
+    },
+  };
+  return {
+    overrides,
+    properties,
+    sheet,
+    activeTriggers,
+    createdTriggerSchedules,
+    get createCalls() { return createCalls; },
+    get openCalls() { return openCalls; },
+    get triggerCreateCalls() { return triggerCreateCalls; },
+  };
+}
+
 test("blog API uses an explicit GA4 date range and preserves aggregation", () => {
   const requests = [];
   const context = loadGas({
@@ -248,4 +352,279 @@ test("source exposes the exact blog function signature", () => {
     source,
     /function getBlogRankingFromGA4_\(startDate, endDate, limit\)/,
   );
+});
+
+test("GAS defines snapshot setup, daily capture, and monthly ranking", () => {
+  for (const name of [
+    "setupInstagramSnapshotStore",
+    "runDailyInstagramSnapshot",
+    "getInstagramMonthlyRanking_",
+  ]) {
+    assert.match(source, new RegExp(`function ${name}\\(`));
+  }
+});
+
+test("snapshot setup creates the store once and keeps exactly one daily trigger", () => {
+  const harness = createSnapshotHarness({ id: null, sheet: createSheet([]) });
+  const context = loadGas(harness.overrides);
+
+  const first = JSON.parse(JSON.stringify(
+    vm.runInContext("setupInstagramSnapshotStore()", context),
+  ));
+  const second = JSON.parse(JSON.stringify(
+    vm.runInContext("setupInstagramSnapshotStore()", context),
+  ));
+
+  assert.deepEqual(first, {
+    spreadsheetId: "created-spreadsheet",
+    sheet: "instagram_daily",
+  });
+  assert.deepEqual(second, first);
+  assert.deepEqual(harness.sheet.rows, [snapshotHeaders]);
+  assert.equal(harness.properties.get("CONTENT_SNAPSHOT_SPREADSHEET_ID"), "created-spreadsheet");
+  assert.equal(harness.createCalls, 1);
+  assert.equal(harness.triggerCreateCalls, 2);
+  assert.deepEqual(harness.createdTriggerSchedules, [
+    { handler: "runDailyInstagramSnapshot", everyDays: 1, atHour: 6 },
+    { handler: "runDailyInstagramSnapshot", everyDays: 1, atHour: 6 },
+  ]);
+  assert.equal(
+    harness.activeTriggers.filter((trigger) =>
+      trigger.getHandlerFunction() === "runDailyInstagramSnapshot").length,
+    1,
+  );
+});
+
+test("snapshot setup replaces duplicate daily triggers without touching other handlers", () => {
+  const daily = () => ({ getHandlerFunction() { return "runDailyInstagramSnapshot"; } });
+  const other = { getHandlerFunction() { return "otherHandler"; } };
+  const harness = createSnapshotHarness({ triggers: [daily(), other, daily()] });
+  const context = loadGas(harness.overrides);
+
+  vm.runInContext("setupInstagramSnapshotStore()", context);
+
+  assert.equal(harness.triggerCreateCalls, 1);
+  assert.equal(harness.activeTriggers.includes(other), true);
+  assert.equal(harness.activeTriggers.length, 2);
+  assert.equal(
+    harness.activeTriggers.filter((trigger) =>
+      trigger.getHandlerFunction() === "runDailyInstagramSnapshot").length,
+    1,
+  );
+});
+
+test("daily capture appends numeric safe snapshot rows", () => {
+  const harness = createSnapshotHarness();
+  const context = loadGas(harness.overrides);
+  context.__posts = {
+    data: [
+      {
+        id: "post-1",
+        timestamp: "2026-07-19T01:02:03Z",
+        permalink: "https://example.test/post-1",
+        caption: "caption",
+        media_type: "VIDEO",
+        views: "42",
+        reach: 12,
+        total_interactions: Number.POSITIVE_INFINITY,
+        saved: -1,
+        shares: true,
+      },
+    ],
+  };
+  vm.runInContext(
+    "getInstagramPostsWithInsights = function () { return __posts; }",
+    context,
+  );
+
+  const result = vm.runInContext("runDailyInstagramSnapshot()", context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { snapshotDate: "2026-07-19", rowsAppended: 1 });
+  assert.deepEqual(harness.sheet.rows[1], [
+    "2026-07-19",
+    "post-1",
+    "2026-07-19T01:02:03Z",
+    "https://example.test/post-1",
+    "caption",
+    "VIDEO",
+    42,
+    12,
+    0,
+    0,
+    0,
+  ]);
+  for (const metric of harness.sheet.rows[1].slice(6)) {
+    assert.equal(typeof metric, "number");
+    assert.ok(Number.isFinite(metric) && metric >= 0);
+  }
+});
+
+test("daily capture fails before calling Instagram for missing store, sheet, schema, or API errors", () => {
+  const cases = [
+    {
+      name: "store",
+      harness: createSnapshotHarness({ id: null }),
+      expected: /setupInstagramSnapshotStore/,
+    },
+    {
+      name: "sheet",
+      harness: createSnapshotHarness({ sheet: null }),
+      expected: /instagram_daily.*missing/i,
+    },
+    {
+      name: "schema",
+      harness: createSnapshotHarness({ sheet: createSheet([["wrong"]]) }),
+      expected: /schema/i,
+    },
+  ];
+
+  for (const { name, harness, expected } of cases) {
+    const context = loadGas(harness.overrides);
+    context.__calls = 0;
+    vm.runInContext(
+      "getInstagramPostsWithInsights = function () { __calls += 1; return { data: [] }; }",
+      context,
+    );
+    assert.throws(
+      () => vm.runInContext("runDailyInstagramSnapshot()", context),
+      expected,
+      name,
+    );
+    assert.equal(context.__calls, 0);
+  }
+
+  const harness = createSnapshotHarness();
+  const context = loadGas(harness.overrides);
+  context.__posts = { error: "Graph unavailable" };
+  vm.runInContext(
+    "getInstagramPostsWithInsights = function () { return __posts; }",
+    context,
+  );
+  assert.throws(
+    () => vm.runInContext("runDailyInstagramSnapshot()", context),
+    /Graph unavailable/,
+  );
+  assert.equal(harness.sheet.rows.length, 1);
+});
+
+test("monthly ranking rejects invalid calendar months and limits before reading the sheet", () => {
+  const harness = createSnapshotHarness();
+  const context = loadGas(harness.overrides);
+
+  for (const month of ["", "2026-00", "2026-13", "0000-01", "2026-1", "2026/01"]) {
+    const result = callJsonApi(context, {
+      api: "instagram-monthly-ranking",
+      month,
+      limit: "3",
+    });
+    assert.match(result.error, /month must be YYYY-MM/);
+  }
+  for (const limit of ["0", "-1", "1.5", "101", "abc"]) {
+    const result = callJsonApi(context, {
+      api: "instagram-monthly-ranking",
+      month: "2026-06",
+      limit,
+    });
+    assert.match(result.error, /limit must be a positive integer/);
+  }
+  assert.equal(harness.openCalls, 0);
+});
+
+test("monthly ranking requires the sheet schema and both exact boundary dates", () => {
+  for (const { rows, expected } of [
+    { rows: [["wrong"]], expected: /schema/i },
+    { rows: [snapshotHeaders], expected: /boundary snapshots/i },
+    {
+      rows: [
+        snapshotHeaders,
+        ["2026-05-31", "post", "2026-01-01T00:00:00Z", "", "", "VIDEO", 0, 0, 0, 0, 0],
+        ["2026-06-02", "post", "2026-01-01T00:00:00Z", "", "", "VIDEO", 10, 0, 0, 0, 0],
+        ["2026-06-30", "post", "2026-01-01T00:00:00Z", "", "", "VIDEO", 20, 0, 0, 0, 0],
+        ["2026-07-02", "post", "2026-01-01T00:00:00Z", "", "", "VIDEO", 30, 0, 0, 0, 0],
+      ],
+      expected: /boundary snapshots/i,
+    },
+  ]) {
+    const context = loadGas(createSnapshotHarness({ sheet: createSheet(rows) }).overrides);
+    const result = callJsonApi(context, {
+      api: "instagram-monthly-ranking",
+      month: "2026-06",
+      limit: "3",
+    });
+    assert.match(result.error, expected);
+  }
+
+  const context = loadGas(createSnapshotHarness({ sheet: null }).overrides);
+  const result = callJsonApi(context, {
+    api: "instagram-monthly-ranking",
+    month: "2026-06",
+    limit: "3",
+  });
+  assert.match(result.error, /instagram_daily.*missing/i);
+});
+
+test("monthly ranking uses latest duplicate rows, safe deltas, exact instants, and deterministic ids", () => {
+  const row = (date, id, timestamp, views, interactions) => [
+    date,
+    id,
+    timestamp,
+    `https://example.test/${id}`,
+    `caption ${id}`,
+    "VIDEO",
+    views,
+    0,
+    interactions,
+    0,
+    0,
+  ];
+  const sheet = createSheet([
+    snapshotHeaders,
+    row("2026-06-01", "duplicate", "2026-06-15T00:00:00Z", 10, 1),
+    row("2026-06-01", "duplicate", "2026-06-15T00:00:00Z", 100, 20),
+    row("2026-07-01", "duplicate", "2026-06-15T00:00:00Z", 130, 25),
+    row("2026-07-01", "duplicate", "2026-06-15T00:00:00Z", 160, 30),
+    row("2026-06-01", "a", "2026-01-01T00:00:00Z", 0, 0),
+    row("2026-07-01", "a", "2026-06-20T09:00:00+09:00", 60, 10),
+    row("2026-06-01", "z", "2026-01-01T00:00:00Z", 0, 0),
+    row("2026-07-01", "z", "2026-06-20T00:00:00Z", 60, 10),
+    row("2026-06-01", "malformed", "2026-01-01T00:00:00Z", "bad", -1),
+    row("2026-07-01", "malformed", "2026-06-10T00:00:00Z", "50", false),
+    row("2026-06-01", "decrease", "2026-01-01T00:00:00Z", 100, 8),
+    row("2026-07-01", "decrease", "2026-06-01T00:00:00Z", 90, 3),
+    row("2026-06-01", "start-only", "2026-01-01T00:00:00Z", 999, 999),
+    row("2026-07-01", "end-only", "2026-06-30T00:00:00Z", 999, 999),
+  ]);
+  const context = loadGas(createSnapshotHarness({ sheet }).overrides);
+  vm.runInContext(
+    "String.prototype.localeCompare = function () { throw new Error('locale compare used'); }",
+    context,
+  );
+
+  const result = callJsonApi(context, {
+    api: "instagram-monthly-ranking",
+    month: "2026-06",
+    limit: "100",
+  });
+
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.data.map((item) => item.id), [
+    "z",
+    "a",
+    "duplicate",
+    "malformed",
+    "decrease",
+  ]);
+  assert.equal(result.data.filter((item) => item.id === "duplicate").length, 1);
+  assert.deepEqual(
+    result.data.map((item) => [item.viewsDelta, item.totalInteractionsDelta]),
+    [[60, 10], [60, 10], [60, 10], [50, 0], [0, 0]],
+  );
+  assert.deepEqual(result.period, {
+    month: "2026-06",
+    startDate: "2026-06-01",
+    endDate: "2026-06-30",
+    timezone: "Asia/Tokyo",
+    boundarySnapshotDate: "2026-07-01",
+  });
+  assert.equal(result.partial, false);
 });
