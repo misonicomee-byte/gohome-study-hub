@@ -8,9 +8,12 @@ var PUBLIC_CONFIG_ = {
 var PUBLIC_ERROR_CODES_ = {
   INVALID_REQUEST: "INVALID_REQUEST",
   UPSTREAM_UNAVAILABLE: "UPSTREAM_UNAVAILABLE",
-  SNAPSHOT_NOT_CONFIGURED: "SNAPSHOT_NOT_CONFIGURED",
-  SNAPSHOT_BOUNDARY_MISSING: "SNAPSHOT_BOUNDARY_MISSING",
+  SNAPSHOT_NOT_CONFIGURED: "INSTAGRAM_SNAPSHOT_STORE_NOT_CONFIGURED",
+  SNAPSHOT_BOUNDARY_MISSING: "INSTAGRAM_COMPLETE_MONTH_BOUNDARY_SNAPSHOTS_REQUIRED",
 };
+
+var PUBLIC_CACHE_MAX_BYTES_ = 90000;
+var PUBLIC_CACHE_LOCK_TIMEOUT_MS_ = 5000;
 
 var INSTAGRAM_SNAPSHOT_SHEET_ = "instagram_daily";
 var INSTAGRAM_SNAPSHOT_TEXT_PREFIX_ = "\u200B";
@@ -35,26 +38,36 @@ function doGet(e) {
 function handlePublicApiRequest_(params) {
   var api = String(params.api || "");
   if (api === "blog-ranking") {
+    if (!hasOnlyQueryParams_(params, ["api", "startDate", "endDate", "limit"])) {
+      return invalidRequest_("Invalid blog-ranking parameters");
+    }
     var startDate = String(params.startDate || "");
     var endDate = String(params.endDate || "");
-    var blogLimit = parseApiLimit_(params.limit, 100, 100);
-    if (!isValidIsoDate_(startDate) || !isValidIsoDate_(endDate) || startDate > endDate) {
-      return publicError_(PUBLIC_ERROR_CODES_.INVALID_REQUEST, "blog-ranking requires valid startDate and endDate");
+    var blogLimit = parseCanonicalLimit_(params.limit, 100, [100]);
+    if (blogLimit === null || !isAllowedBlogRange_(startDate, endDate)) {
+      return invalidRequest_("blog-ranking requires an allowed startDate and endDate");
     }
     return cachedJson_("blog:" + startDate + ":" + endDate + ":" + blogLimit, 600, function () {
       return getBlogRankingFromGA4_(startDate, endDate, blogLimit);
     });
   }
   if (api === "instagram-posts") {
-    var postsLimit = parseApiLimit_(params.limit, 30, 100);
+    if (!hasOnlyQueryParams_(params, ["api", "limit"])) {
+      return invalidRequest_("Invalid instagram-posts parameters");
+    }
+    var postsLimit = parseCanonicalLimit_(params.limit, 30, [30, 50, 100]);
+    if (postsLimit === null) return invalidRequest_("Invalid instagram-posts limit");
     return cachedJson_("instagram-posts:" + postsLimit, 600, function () {
       return getInstagramPostsWithInsights_(postsLimit);
     });
   }
   if (api === "instagram-monthly-ranking") {
+    if (!hasOnlyQueryParams_(params, ["api", "month", "limit"])) {
+      return invalidRequest_("Invalid instagram-monthly-ranking parameters");
+    }
     var month = String(params.month || "");
-    var rankingLimit = parseApiLimit_(params.limit, 3, 100);
-    if (!isValidYearMonth_(month)) {
+    var rankingLimit = parseCanonicalLimit_(params.limit, 3, [3]);
+    if (rankingLimit === null || !isAllowedRankingMonth_(month)) {
       return publicError_(PUBLIC_ERROR_CODES_.INVALID_REQUEST, "month must be YYYY-MM");
     }
     return cachedJson_("instagram-monthly:" + month + ":" + rankingLimit, 600, function () {
@@ -62,6 +75,9 @@ function handlePublicApiRequest_(params) {
     });
   }
   if (api === "podcast-list") {
+    if (!hasOnlyQueryParams_(params, ["api"])) {
+      return invalidRequest_("Invalid podcast-list parameters");
+    }
     return cachedJson_("podcast-list", 600, getPodcastList_);
   }
   return publicError_(PUBLIC_ERROR_CODES_.INVALID_REQUEST, "Unknown api");
@@ -71,36 +87,101 @@ function publicError_(code, message) {
   return { error: message, errorCode: code, data: [] };
 }
 
-function cachedJson_(key, ttl, loader) {
-  var cache = CacheService.getScriptCache();
-  var hit = cache.get(key);
-  if (hit) {
-    try { return JSON.parse(hit); } catch (ignored) { console.warn("Invalid public API cache entry"); }
-  }
-  var value = loader();
-  cache.put(key, JSON.stringify(value), ttl);
-  return value;
+function invalidRequest_(message) {
+  return publicError_(PUBLIC_ERROR_CODES_.INVALID_REQUEST, message);
 }
 
-function parseApiLimit_(value, defaultLimit, maxLimit) {
+function cachedJson_(key, ttl, loader) {
+  var cache = null;
+  try {
+    cache = CacheService.getScriptCache();
+  } catch (ignored) {
+    console.warn("Public API cache is unavailable");
+  }
+
+  var hit = readCachedJson_(cache, key);
+  if (hit !== null) return hit;
+
+  var lock = LockService.getScriptLock();
+  var locked = false;
+  try {
+    locked = lock.tryLock(PUBLIC_CACHE_LOCK_TIMEOUT_MS_);
+  } catch (ignored) {
+    console.warn("Public API cache lock is unavailable");
+  }
+  if (!locked) {
+    return publicError_(PUBLIC_ERROR_CODES_.UPSTREAM_UNAVAILABLE, "Content ranking is temporarily unavailable");
+  }
+
+  try {
+    hit = readCachedJson_(cache, key);
+    if (hit !== null) return hit;
+
+    var value = loader();
+    if (!value || !value.error) writeCachedJson_(cache, key, value, ttl);
+    return value;
+  } finally {
+    try {
+      lock.releaseLock();
+    } catch (ignored) {
+      console.warn("Public API cache lock release failed");
+    }
+  }
+}
+
+function readCachedJson_(cache, key) {
+  if (!cache) return null;
+  try {
+    var hit = cache.get(key);
+    if (!hit) return null;
+    return JSON.parse(hit);
+  } catch (ignored) {
+    console.warn("Public API cache read failed");
+    return null;
+  }
+}
+
+function writeCachedJson_(cache, key, value, ttl) {
+  if (!cache) return;
+  try {
+    var serialized = JSON.stringify(value);
+    if (Utilities.newBlob(serialized).getBytes().length >= PUBLIC_CACHE_MAX_BYTES_) return;
+    cache.put(key, serialized, ttl);
+  } catch (ignored) {
+    console.warn("Public API cache write failed");
+  }
+}
+
+function parseCanonicalLimit_(value, defaultLimit, allowedLimits) {
   var raw = value === undefined || value === null || value === "" ? String(defaultLimit) : String(value);
-  if (!/^\d+$/.test(raw)) throw new Error("invalid limit");
+  if (!/^\d+$/.test(raw)) return null;
   var parsed = Number(raw);
-  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maxLimit) throw new Error("invalid limit");
+  if (!Number.isSafeInteger(parsed) || allowedLimits.indexOf(parsed) === -1) return null;
   return parsed;
+}
+
+function hasOnlyQueryParams_(params, allowedNames) {
+  return Object.keys(params).every(function (name) {
+    return allowedNames.indexOf(name) !== -1;
+  });
 }
 
 function isValidIsoDate_(value) {
   var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return false;
-  var date = createUtcCalendarDate_(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return date.getUTCFullYear() === Number(match[1]) &&
-    date.getUTCMonth() === Number(match[2]) - 1 &&
-    date.getUTCDate() === Number(match[3]);
+  var year = Number(match[1]);
+  var month = Number(match[2]);
+  var day = Number(match[3]);
+  if (year < 1) return false;
+  var date = createUtcCalendarDate_(year, month - 1, day);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
 }
 
 function isValidYearMonth_(value) {
-  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
+  var match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(value);
+  return !!match && Number(match[1]) >= 1;
 }
 
 function createUtcCalendarDate_(year, monthIndex, day) {
@@ -108,6 +189,40 @@ function createUtcCalendarDate_(year, monthIndex, day) {
   date.setUTCHours(0, 0, 0, 0);
   date.setUTCFullYear(year, monthIndex, day);
   return date;
+}
+
+function currentJstDate_() {
+  return Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+}
+
+function dateStringUtc_(date) {
+  return Utilities.formatDate(date, "UTC", "yyyy-MM-dd");
+}
+
+function isCompleteCalendarMonth_(startDate, endDate) {
+  if (startDate.slice(8) !== "01") return false;
+  var parts = startDate.split("-").map(Number);
+  var expectedEnd = dateStringUtc_(createUtcCalendarDate_(parts[0], parts[1], 0));
+  return endDate === expectedEnd;
+}
+
+function rollingStartDate_(endDate) {
+  var parts = endDate.split("-").map(Number);
+  var start = createUtcCalendarDate_(parts[0], parts[1] - 1, parts[2]);
+  start.setUTCDate(start.getUTCDate() - 179);
+  return dateStringUtc_(start);
+}
+
+function isAllowedBlogRange_(startDate, endDate) {
+  if (!isValidIsoDate_(startDate) || !isValidIsoDate_(endDate) || startDate > endDate) return false;
+  var currentDate = currentJstDate_();
+  if (startDate.slice(0, 4) < "2020" || endDate > currentDate) return false;
+  if (isCompleteCalendarMonth_(startDate, endDate)) return true;
+  return endDate === currentDate && startDate === rollingStartDate_(currentDate);
+}
+
+function isAllowedRankingMonth_(month) {
+  return isValidYearMonth_(month) && month >= "2020-01" && month <= currentJstDate_().slice(0, 7);
 }
 
 function callInstagramApi_(endpoint) {
