@@ -84,6 +84,27 @@ test("YouTube breaks equal monthly metrics by newest publish date then video id"
   assert.deepEqual(result.items.map((item) => item.contentId), ["c", "b", "a"]);
 });
 
+test("YouTube orders RFC3339 offsets by instant, then equal instants by video id", async () => {
+  const fetchImpl = async (url) => {
+    if (new URL(url).hostname === "youtubeanalytics.googleapis.com") {
+      return jsonResponse({ rows: [
+        ["a", "SHORTS", 100, 20],
+        ["z", "SHORTS", 100, 20],
+        ["b", "SHORTS", 100, 20],
+      ] });
+    }
+    return jsonResponse({ items: [
+      detail("a", "2026-02-01T09:00:00+09:00"),
+      detail("z", "2026-02-01T00:00:00Z"),
+      detail("b", "2026-02-01T00:00:01Z"),
+    ] });
+  };
+
+  const result = await collectYouTubeRanking({ accessToken: "test", channelId: "UCtest", period, fetchImpl });
+
+  assert.deepEqual(result.items.map((item) => item.contentId), ["b", "z", "a"]);
+});
+
 test("YouTube tie breaks use deterministic code-unit ordering", async () => {
   const fetchImpl = async (url) => {
     if (new URL(url).hostname === "youtubeanalytics.googleapis.com") {

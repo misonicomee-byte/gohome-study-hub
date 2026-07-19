@@ -158,7 +158,7 @@ export async function collectYouTubeRanking({ accessToken, channelId, period, fe
     .map((item) => ({ ...item, snippet: snippetsById.get(item.id) }))
     .sort((a, b) => b.views - a.views
       || b.engagedViews - a.engagedViews
-      || compareCodeUnits(b.snippet.publishedAt, a.snippet.publishedAt)
+      || Date.parse(b.snippet.publishedAt) - Date.parse(a.snippet.publishedAt)
       || compareCodeUnits(b.id, a.id))
     .slice(0, 3)
     .map((item, index) => ({
