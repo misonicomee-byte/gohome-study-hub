@@ -72,10 +72,42 @@ const FETCH_OPTS: RequestInit = {
  * gohome-clinic.com の /YYYY/MM/DD/ パターンURLが対象
  */
 let _blogCache: BlogPost[] | null = null;
+
+export function rollingBlogDateRange(now = new Date()) {
+  const dateParts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(now)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  const endDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+  const start = new Date(0);
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCFullYear(
+    Number(dateParts.year),
+    Number(dateParts.month) - 1,
+    Number(dateParts.day),
+  );
+  start.setUTCDate(start.getUTCDate() - 179);
+  return { startDate: start.toISOString().slice(0, 10), endDate };
+}
+
 async function fetchBlogFromGAS(): Promise<BlogPost[]> {
   if (_blogCache) return _blogCache;
   try {
-    const url = `${GAS_URL}?api=blog-ranking&days=180&limit=100`;
+    const { startDate, endDate } = rollingBlogDateRange();
+    const url = new URL(GAS_URL);
+    url.search = new URLSearchParams({
+      api: "blog-ranking",
+      startDate,
+      endDate,
+      limit: "100",
+    });
     const res = await fetch(url, FETCH_OPTS);
     if (!res.ok) {
       console.warn(`[portal] blog GAS fetch failed: status=${res.status}`);
