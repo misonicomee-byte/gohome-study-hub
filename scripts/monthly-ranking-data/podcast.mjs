@@ -1,5 +1,10 @@
 import { validateManifest } from "./schema.mjs";
-import { collectYouTubeAnalyticsItems, collectYouTubeSnippets } from "./youtube.mjs";
+import {
+  collectYouTubeAnalyticsItems,
+  collectYouTubeSnippets,
+  requireCompletedYouTubeReportingPeriod,
+  YOUTUBE_REPORTING_TIMEZONE,
+} from "./youtube.mjs";
 
 export const PODCAST_RSS_URL = "https://anchor.fm/s/10da34b80/podcast/rss";
 const RSS_IMAGE_HOST = "d3t3ozftmdmh3i.cloudfront.net";
@@ -141,9 +146,12 @@ function parseRss(xml) {
     };
   });
   const seenGuid = new Set();
+  const seenUrl = new Set();
   for (const episode of episodes) {
     if (seenGuid.has(episode.guid)) throw new Error("Podcast RSS returned duplicate guid");
+    if (seenUrl.has(episode.url)) throw new Error("Podcast RSS returned duplicate Spotify URL");
     seenGuid.add(episode.guid);
+    seenUrl.add(episode.url);
   }
   return episodes;
 }
@@ -197,11 +205,13 @@ export async function collectPodcastRanking({
   gasUrl,
   rssUrl = PODCAST_RSS_URL,
   period,
+  now = new Date(),
   fetchImpl = fetch,
 }) {
+  requireCompletedYouTubeReportingPeriod(period, now);
   const [listed, analyticsItems, rssEpisodes] = await Promise.all([
     fetchPodcastList(gasUrl, fetchImpl),
-    collectYouTubeAnalyticsItems({ accessToken, channelId, period, fetchImpl }),
+    collectYouTubeAnalyticsItems({ accessToken, channelId, period, now, fetchImpl }),
     fetchRss(rssUrl, fetchImpl),
   ]);
   const metrics = new Map(analyticsItems.map((item) => [item.id, item]));
@@ -222,14 +232,22 @@ export async function collectPodcastRanking({
     .slice(0, 3);
   if (ranked.length < 3) throw new Error("Podcast returned fewer than 3 episodes");
   const indexes = rssIndexes(rssEpisodes);
+  const usedGuids = new Set();
   const items = ranked.map((item, index) => {
     const rssEpisode = matchRssEpisode(item.title, indexes, item.id);
+    const snippetEpisode = matchRssEpisode(item.snippet.title, indexes, item.id);
+    if (rssEpisode.guid !== snippetEpisode.guid) {
+      throw new Error(`Podcast identity mismatch for YouTube video ${item.id}`);
+    }
+    if (usedGuids.has(rssEpisode.guid)) throw new Error(`Podcast duplicate RSS episode assignment for ${item.id}`);
+    usedGuids.add(rssEpisode.guid);
     return {
       rank: index + 1,
       contentId: item.id,
       title: rssEpisode.title,
       url: rssEpisode.url,
       imageUrl: rssEpisode.imageUrl,
+      episodeGuid: rssEpisode.guid,
       publishedAt: item.snippet.publishedAt.slice(0, 10),
       metricValue: item.views,
       secondaryMetricValue: item.engagedViews,
@@ -239,9 +257,10 @@ export async function collectPodcastRanking({
     schemaVersion: 1,
     channel: "podcast",
     period,
+    reportingTimezone: YOUTUBE_REPORTING_TIMEZONE,
     rankingMetric: "views",
-    rankingLabel: `前月（${period.month}）中に増えたYouTube再生回数`,
-    generatedAt: new Date().toISOString(),
+    rankingLabel: `前月（${period.month}）増加再生数（YouTube Analytics・太平洋時間）`,
+    generatedAt: now.toISOString(),
     items,
   });
 }

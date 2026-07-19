@@ -36,8 +36,13 @@ function fixtureManifest(channel, marker = channel) {
     schemaVersion: 1,
     channel,
     period,
-    rankingMetric: "fixture",
-    rankingLabel: "fixture",
+    ...(channel === "youtube" || channel === "podcast"
+      ? { reportingTimezone: "America/Los_Angeles" }
+      : {}),
+    rankingMetric: channel === "podcast" ? "views" : "fixture",
+    rankingLabel: channel === "podcast"
+      ? "前月（2026-06）増加再生数（YouTube Analytics・太平洋時間）"
+      : "fixture",
     generatedAt: "2026-07-19T00:00:00Z",
     items: [1, 2, 3].map((rank) => ({
       rank,
@@ -46,7 +51,10 @@ function fixtureManifest(channel, marker = channel) {
       url: channel === "podcast"
         ? `https://podcasters.spotify.com/pod/show/go-ito/episodes/${marker}-${rank}`
         : `https://example.test/${channel}/${rank}`,
-      ...(channel === "podcast" ? { imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${rank}.jpg` } : {}),
+      ...(channel === "podcast" ? {
+        imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${rank}.jpg`,
+        episodeGuid: `${marker}-guid-${rank}`,
+      } : {}),
       publishedAt: "2026-01-01",
       metricValue: 4 - rank,
       secondaryMetricValue: 1,
@@ -91,6 +99,7 @@ test("single-channel Podcast collection needs no unrelated collectors and preser
     },
   });
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].now, now);
   assert.equal(result.manifests.length, 1);
   assert.equal(result.manifests[0].channel, "podcast");
   assert.equal(JSON.parse(await readFile(join(out, "podcast", "ranking.json"), "utf8")).channel, "podcast");
@@ -348,6 +357,7 @@ test("collector failure leaves no mixed final manifest directory", async (t) => 
     schemaVersion: 1,
     channel,
     period,
+    ...(channel === "youtube" ? { reportingTimezone: "America/Los_Angeles" } : {}),
     rankingMetric: "fixture",
     rankingLabel: "fixture",
     generatedAt: "2026-07-19T00:00:00Z",

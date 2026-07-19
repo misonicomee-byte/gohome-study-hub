@@ -232,6 +232,7 @@ export async function runCollection({
     gasUrl: configuration.gasUrl,
     rssUrl: PODCAST_RSS_URL,
     period,
+    now,
     fetchImpl,
   })));
   requireChannelManifests(manifests, selectedChannels);

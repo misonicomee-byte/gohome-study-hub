@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { collectBlogRanking } from "../scripts/monthly-ranking-data/blog.mjs";
 import { collectInstagramRanking } from "../scripts/monthly-ranking-data/instagram.mjs";
-import { collectYouTubeRanking } from "../scripts/monthly-ranking-data/youtube.mjs";
+import { collectYouTubeAnalyticsItems, collectYouTubeRanking } from "../scripts/monthly-ranking-data/youtube.mjs";
 
 const period = {
   month: "2026-06",
@@ -23,6 +23,50 @@ function detailsForRequest(url, publishedAtById = new Map()) {
   const ids = new URL(url).searchParams.get("id").split(",");
   return jsonResponse({ items: ids.map((id) => detail(id, publishedAtById.get(id))) });
 }
+
+test("YouTube accepts omitted Analytics rows as a legitimate zero-result report", async () => {
+  const items = await collectYouTubeAnalyticsItems({
+    accessToken: "test",
+    channelId: "UCtest",
+    period,
+    now: new Date("2026-07-05T12:00:00Z"),
+    fetchImpl: async () => jsonResponse({}),
+  });
+  assert.deepEqual(items, []);
+});
+
+test("YouTube rejects an API response whose reported date range differs from the request", async () => {
+  await assert.rejects(collectYouTubeAnalyticsItems({
+    accessToken: "test",
+    channelId: "UCtest",
+    period,
+    now: new Date("2026-07-05T12:00:00Z"),
+    fetchImpl: async () => jsonResponse({
+      query: { startDate: period.startDate, endDate: "2026-06-29" },
+      rows: [],
+    }),
+  }), /Analytics.*date range/i);
+});
+
+test("YouTube rejects current, future, and reporting-lag periods before network access", async (t) => {
+  for (const [label, candidatePeriod, now] of [
+    ["reporting lag", period, "2026-07-03T12:00:00Z"],
+    ["current month", { month: "2026-07", startDate: "2026-07-01", endDate: "2026-07-31", timezone: "Asia/Tokyo" }, "2026-07-19T12:00:00Z"],
+    ["future month", { month: "2026-08", startDate: "2026-08-01", endDate: "2026-08-31", timezone: "Asia/Tokyo" }, "2026-07-19T12:00:00Z"],
+  ]) {
+    await t.test(label, async () => {
+      let requests = 0;
+      await assert.rejects(collectYouTubeRanking({
+        accessToken: "test",
+        channelId: "UCtest",
+        period: candidatePeriod,
+        now: new Date(now),
+        fetchImpl: async () => { requests += 1; return jsonResponse({}); },
+      }), /completed|reporting lag/i);
+      assert.equal(requests, 0);
+    });
+  }
+});
 
 test("YouTube requests the video and creatorContentType dimensions and keeps only Shorts", async () => {
   const requests = [];
@@ -50,6 +94,8 @@ test("YouTube requests the video and creatorContentType dimensions and keeps onl
 
   assert.deepEqual(result.items.map((item) => item.contentId), ["b", "c", "a"]);
   assert.equal(result.items.length, 3);
+  assert.equal(result.reportingTimezone, "America/Los_Angeles");
+  assert.match(result.rankingLabel, /YouTube Analytics・太平洋時間/);
   assert.equal(requests.length, 2);
   assert.deepEqual(Object.fromEntries(requests[0].searchParams), {
     ids: "channel==UCtest",
@@ -234,7 +280,6 @@ test("YouTube rejects malformed Analytics payloads and rows", async (t) => {
   const malformedBodies = [
     null,
     [],
-    {},
     { rows: null },
     { rows: {} },
     { rows: [["", "SHORTS", 10, 5], ["b", "SHORTS", 9, 4], ["c", "SHORTS", 8, 3]] },

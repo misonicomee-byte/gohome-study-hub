@@ -47,9 +47,10 @@ function podcastRows(ids = ["a", "b", "c", "d"]) {
 }
 
 function details(ids, published = {}) {
+  const numbers = { a: 101, b: 102, c: 103, d: 104, missing: 999 };
   return ids.map((id) => ({
     id,
-    snippet: { title: `YouTube ${id}`, publishedAt: published[id] ?? "2026-01-01T00:00:00Z" },
+    snippet: { title: `${numbers[id] ?? 900} YouTube ${id}`, publishedAt: published[id] ?? "2026-01-01T00:00:00Z" },
   }));
 }
 
@@ -104,8 +105,10 @@ test("Podcast ranks all listed YouTube episodes by monthly views and uses canoni
   assert.equal(result.items[1].imageUrl, "https://d3t3ozftmdmh3i.cloudfront.net/channel.jpg");
   assert.equal(result.items[0].metricValue, 100);
   assert.equal(result.items[0].secondaryMetricValue, 21);
+  assert.equal(result.items[0].episodeGuid, "guid-c");
   assert.equal(result.rankingMetric, "views");
-  assert.match(result.rankingLabel, /前月.*増えたYouTube再生回数/);
+  assert.equal(result.rankingLabel, "前月（2026-06）増加再生数（YouTube Analytics・太平洋時間）");
+  assert.equal(result.reportingTimezone, "America/Los_Angeles");
   assert.deepEqual(Object.fromEntries(requests.find((url) => url.hostname === "youtubeanalytics.googleapis.com").searchParams), {
     ids: "channel==UCtest",
     startDate: "2026-06-01",
@@ -185,4 +188,82 @@ test("Podcast rejects unsafe canonical RSS links and images", async () => {
     }),
     /Spotify|RSS/i,
   );
+});
+
+test("Podcast rejects an unfinished reporting period before contacting GAS, YouTube, or RSS", async () => {
+  let requests = 0;
+  await assert.rejects(collectPodcastRanking({
+    accessToken: "test",
+    channelId: "UCtest",
+    gasUrl: "https://example.test/exec",
+    rssUrl: "https://anchor.fm/s/10da34b80/podcast/rss",
+    period,
+    now: new Date("2026-07-03T12:00:00Z"),
+    fetchImpl: async () => { requests += 1; return jsonResponse({}); },
+  }), /reporting lag/i);
+  assert.equal(requests, 0);
+});
+
+test("Podcast requires GAS and YouTube titles to identify the same unique RSS episode", async (t) => {
+  for (const [label, mutateRows, mutateDetails, expected] of [
+    ["GAS and YouTube mismatch", (rows) => rows, (items) => items.map((item) => item.id === "b"
+      ? { ...item, snippet: { ...item.snippet, title: "101 Wrong episode" } }
+      : item), /identity mismatch/i],
+    ["duplicate RSS assignment", (rows) => rows.map((row) => row.youtubeId === "b"
+      ? { ...row, title: "101 Duplicate episode" }
+      : row), (items) => items.map((item) => item.id === "b"
+      ? { ...item, snippet: { ...item.snippet, title: "101 Duplicate episode" } }
+      : item), /duplicate.*RSS episode/i],
+  ]) {
+    await t.test(label, async () => {
+      const fetchImpl = async (url) => {
+        const parsed = new URL(url);
+        if (parsed.searchParams.get("api") === "podcast-list") {
+          const rows = mutateRows(podcastRows(["a", "b", "c"]));
+          return jsonResponse({ data: rows, count: rows.length });
+        }
+        if (parsed.hostname === "youtubeanalytics.googleapis.com") return jsonResponse({ rows: [] });
+        if (parsed.hostname === "www.googleapis.com") {
+          return jsonResponse({ items: mutateDetails(details(parsed.searchParams.get("id").split(","))) });
+        }
+        return textResponse(rss([
+          rssItem({ id: "a", title: "101 YouTube a" }),
+          rssItem({ id: "b", title: "102 YouTube b" }),
+          rssItem({ id: "c", title: "103 YouTube c" }),
+        ]));
+      };
+      await assert.rejects(collectPodcastRanking({
+        accessToken: "test", channelId: "UCtest", gasUrl: "https://example.test/exec",
+        rssUrl: "https://anchor.fm/s/10da34b80/podcast/rss", period, fetchImpl,
+      }), expected);
+    });
+  }
+});
+
+test("Podcast rejects duplicate YouTube IDs, RSS GUIDs, and canonical Spotify episode URLs", async (t) => {
+  for (const [label, rows, items, expected] of [
+    ["YouTube ID", [...podcastRows(["a", "b"]), podcastRows(["a"])[0]], [
+      rssItem({ id: "a", title: "101 YouTube a" }), rssItem({ id: "b", title: "102 YouTube b" }), rssItem({ id: "c", title: "103 YouTube c" }),
+    ], /invalid episode/i],
+    ["RSS GUID", podcastRows(["a", "b", "c"]), [
+      rssItem({ id: "a", title: "101 YouTube a" }), rssItem({ id: "a", title: "102 YouTube b" }).replace("/episodes/a", "/episodes/b"), rssItem({ id: "c", title: "103 YouTube c" }),
+    ], /duplicate guid/i],
+    ["Spotify URL", podcastRows(["a", "b", "c"]), [
+      rssItem({ id: "a", title: "101 YouTube a" }), rssItem({ id: "b", title: "102 YouTube b" }).replace("/episodes/b", "/episodes/a"), rssItem({ id: "c", title: "103 YouTube c" }),
+    ], /duplicate.*Spotify/i],
+  ]) {
+    await t.test(label, async () => {
+      const fetchImpl = async (url) => {
+        const parsed = new URL(url);
+        if (parsed.searchParams.get("api") === "podcast-list") return jsonResponse({ data: rows, count: rows.length });
+        if (parsed.hostname === "youtubeanalytics.googleapis.com") return jsonResponse({ rows: [] });
+        if (parsed.hostname === "www.googleapis.com") return jsonResponse({ items: details(parsed.searchParams.get("id").split(",")) });
+        return textResponse(rss(items));
+      };
+      await assert.rejects(collectPodcastRanking({
+        accessToken: "test", channelId: "UCtest", gasUrl: "https://example.test/exec",
+        rssUrl: "https://anchor.fm/s/10da34b80/podcast/rss", period, fetchImpl,
+      }), expected);
+    });
+  }
 });

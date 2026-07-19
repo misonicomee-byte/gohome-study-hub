@@ -76,20 +76,31 @@ export function buildCopy(manifest) {
     if (item.metricValue < 0) throw new Error(`rank ${item.rank} metric must be non-negative`);
   }
   const ordered = [...items].sort((a, b) => b.rank - a.rank);
-  const lines = [`${month}の${CHANNEL_LABELS[manifest.channel]}人気コンテンツ、トップ3をご紹介します。`];
+  const isPodcast = manifest.channel === "podcast";
+  const lines = [isPodcast
+    ? `${month}のポッドキャスト、前月増加再生数トップ3。集計はYouTube Analytics・太平洋時間です。`
+    : `${month}の${CHANNEL_LABELS[manifest.channel]}人気コンテンツ、トップ3をご紹介します。`];
   for (const item of ordered) {
-    lines.push(`第${item.rank}位、${item.title}。${rankingLabel}は${item.metricValue.toLocaleString("ja-JP")}でした。`);
+    lines.push(isPodcast
+      ? `第${item.rank}位、${item.title}。前月増加再生数は、${item.metricValue.toLocaleString("ja-JP")}回でした。`
+      : `第${item.rank}位、${item.title}。${rankingLabel}は${item.metricValue.toLocaleString("ja-JP")}でした。`);
   }
   lines.push("気になる内容は、ごうホームクリニック公式チャンネルとサイトからご覧ください。");
-  const title = `【${month}】${CHANNEL_LABELS[manifest.channel]} 人気コンテンツTOP3`;
+  const title = isPodcast
+    ? `【${month}】Podcast 前月増加再生数TOP3`
+    : `【${month}】${CHANNEL_LABELS[manifest.channel]} 人気コンテンツTOP3`;
   const rankingLines = items.map((item) => `${item.rank}位 ${item.title}\n${item.url}`).join("\n\n");
   const description = [
-    descriptionLead(manifest, month, CHANNEL_LABELS[manifest.channel]),
+    isPodcast
+      ? `${month}のポッドキャスト前月増加再生数TOP3をご紹介します。集計はYouTube Analytics・太平洋時間です。`
+      : descriptionLead(manifest, month, CHANNEL_LABELS[manifest.channel]),
     `集計指標：${rankingLabel}`,
     rankingLines,
     "ごうホームクリニック\nhttps://gohome-clinic.com/",
     "※本動画はAIを活用して制作しています。掲載情報は公式情報をご確認ください。",
-    `#ごうホームクリニック #訪問診療 #在宅医療 #人気コンテンツ ${CHANNEL_TAGS[manifest.channel]}`,
+    isPodcast
+      ? `#ごうホームクリニック #訪問診療 #在宅医療 #前月増加再生数 ${CHANNEL_TAGS[manifest.channel]}`
+      : `#ごうホームクリニック #訪問診療 #在宅医療 #人気コンテンツ ${CHANNEL_TAGS[manifest.channel]}`,
   ].join("\n\n");
   return {
     narration: lines.join("\n"),

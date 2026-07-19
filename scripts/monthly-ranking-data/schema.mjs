@@ -77,8 +77,24 @@ export function validateManifest(value) {
   }
   if (startDate > endDate) throw new Error("period.startDate must not be after period.endDate");
   if (timezone !== "Asia/Tokyo") throw new Error("timezone must be Asia/Tokyo");
+  if (["youtube", "podcast"].includes(value.channel)
+    && value.reportingTimezone !== "America/Los_Angeles") {
+    throw new Error("reportingTimezone must be America/Los_Angeles for YouTube Analytics metrics");
+  }
+  if (["blog", "instagram"].includes(value.channel)
+    && value.reportingTimezone !== undefined
+    && value.reportingTimezone !== "Asia/Tokyo") {
+    throw new Error("reportingTimezone must be Asia/Tokyo for blog and Instagram metrics");
+  }
   if (!isNonEmptyString(value.rankingMetric)) throw new Error("rankingMetric must be a non-empty string");
   if (!isNonEmptyString(value.rankingLabel)) throw new Error("rankingLabel must be a non-empty string");
+  if (value.channel === "podcast") {
+    if (value.rankingMetric !== "views") throw new Error("Podcast rankingMetric must be views");
+    if (value.rankingLabel !== `前月（${month}）増加再生数（YouTube Analytics・太平洋時間）`) {
+      throw new Error("invalid Podcast rankingLabel");
+    }
+    if (value.rankingMode !== undefined) throw new Error("Podcast rankingMode is not supported");
+  }
   if (!isIsoTimestamp(value.generatedAt)) throw new Error("generatedAt must be a parseable ISO timestamp");
   if (!Array.isArray(value.items) || value.items.length !== 3) {
     throw new Error("manifest must contain exactly 3 items");
@@ -88,6 +104,9 @@ export function validateManifest(value) {
     && item.rank === index + 1)) {
     throw new Error("items must have ranks 1,2,3");
   }
+  const contentIds = new Set();
+  const podcastGuids = new Set();
+  const podcastUrls = new Set();
   for (const item of value.items) {
     if (!isNonEmptyString(item.contentId)
       || !isNonEmptyString(item.title)
@@ -97,11 +116,20 @@ export function validateManifest(value) {
       || !Number.isFinite(item.secondaryMetricValue)) {
       throw new Error(`invalid rank ${item.rank}`);
     }
+    if (contentIds.has(item.contentId)) throw new Error(`duplicate contentId ${item.contentId}`);
+    contentIds.add(item.contentId);
     if (value.channel === "podcast" && !isCanonicalPodcastUrl(item.url, "episode")) {
       throw new Error(`invalid Podcast Spotify URL for rank ${item.rank}`);
     }
     if (value.channel === "podcast" && !isCanonicalPodcastUrl(item.imageUrl, "image")) {
       throw new Error(`invalid Podcast image URL for rank ${item.rank}`);
+    }
+    if (value.channel === "podcast") {
+      if (!isNonEmptyString(item.episodeGuid)) throw new Error(`invalid Podcast episodeGuid for rank ${item.rank}`);
+      if (podcastGuids.has(item.episodeGuid)) throw new Error(`duplicate Podcast episodeGuid ${item.episodeGuid}`);
+      if (podcastUrls.has(item.url)) throw new Error(`duplicate Podcast Spotify URL ${item.url}`);
+      podcastGuids.add(item.episodeGuid);
+      podcastUrls.add(item.url);
     }
   }
   return value;

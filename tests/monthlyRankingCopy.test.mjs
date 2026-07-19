@@ -6,6 +6,7 @@ const manifest = {
   schemaVersion: 1,
   channel: "youtube",
   period: { month: "2026-06", startDate: "2026-06-01", endDate: "2026-06-30", timezone: "Asia/Tokyo" },
+  reportingTimezone: "America/Los_Angeles",
   rankingMetric: "views",
   rankingLabel: "2026-06の再生回数",
   generatedAt: "2026-07-05T09:00:00+09:00",
@@ -53,6 +54,7 @@ test("Instagram initial fallback is not described as a monthly increase", () => 
   const copy = buildCopy({
     ...manifest,
     channel: "instagram",
+    reportingTimezone: "Asia/Tokyo",
     rankingMetric: "currentViewsOfPostsPublishedInMonth",
     rankingMode: "initialPublishedMonthCurrentViews",
     rankingLabel: "2026-06公開投稿の現在views TOP3（初回限定・月内増加数ではありません）",
@@ -61,21 +63,24 @@ test("Instagram initial fallback is not described as a monthly increase", () => 
   assert.match(copy.postCaption, /月内の増加数ではありません/);
 });
 
-test("Podcast copy accurately describes monthly YouTube view growth as popularity", () => {
+test("Podcast copy uses the confirmed previous-month growth title and Pacific-time disclosure", () => {
   const copy = buildCopy({
     ...manifest,
     channel: "podcast",
-    rankingLabel: "前月（2026-06）中に増えたYouTube再生回数",
+    rankingLabel: "前月（2026-06）増加再生数（YouTube Analytics・太平洋時間）",
     items: manifest.items.map((item, index) => ({
       ...item,
+      episodeGuid: `guid-${index}`,
       url: `https://podcasters.spotify.com/pod/show/go-ito/episodes/episode-${index}`,
       imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${index}.jpg`,
     })),
   });
-  assert.match(copy.postCaption, /ポッドキャスト 人気コンテンツTOP3/);
-  assert.match(copy.postCaption, /前月.*中に増えたYouTube再生回数/);
+  assert.match(copy.postCaption, /【2026年6月】Podcast 前月増加再生数TOP3/);
+  assert.match(copy.narration, /^2026年6月のポッドキャスト、前月増加再生数トップ3。/);
+  assert.match(copy.narration, /YouTube Analytics・太平洋時間/);
+  assert.match(copy.postCaption, /YouTube Analytics・太平洋時間/);
   assert.match(copy.postCaption, /#ポッドキャスト/);
-  assert.doesNotMatch(copy.postCaption, /新着/);
+  assert.doesNotMatch(copy.postCaption + copy.narration, /人気コンテンツ|新着/);
 });
 
 test("rejects malformed periods, prototype channels, injection, claims, and unsafe URLs", () => {
@@ -115,6 +120,7 @@ test("rejects non-canonical HTTPS URLs and fallback metadata mismatches", () => 
   assert.throws(() => buildCopy({
     ...manifest,
     channel: "instagram",
+    reportingTimezone: "Asia/Tokyo",
     rankingMode: "initialPublishedMonthCurrentViews",
   }), /fallback/i);
 });

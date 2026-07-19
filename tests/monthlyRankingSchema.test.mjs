@@ -9,6 +9,7 @@ const valid = {
   schemaVersion: 1,
   channel: "youtube",
   period: { month: "2026-06", startDate: "2026-06-01", endDate: "2026-06-30", timezone: "Asia/Tokyo" },
+  reportingTimezone: "America/Los_Angeles",
   rankingMetric: "views",
   rankingLabel: "2026年6月の再生回数",
   generatedAt: "2026-07-05T09:00:00+09:00",
@@ -28,8 +29,11 @@ test("accepts Podcast items only with canonical Spotify and RSS image metadata",
   const podcast = {
     ...valid,
     channel: "podcast",
+    rankingMetric: "views",
+    rankingLabel: "前月（2026-06）増加再生数（YouTube Analytics・太平洋時間）",
     items: valid.items.map((item, index) => ({
       ...item,
+      episodeGuid: `guid-${index}`,
       url: `https://podcasters.spotify.com/pod/show/go-ito/episodes/episode-${index}`,
       imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${index}.jpg`,
     })),
@@ -39,6 +43,45 @@ test("accepts Podcast items only with canonical Spotify and RSS image metadata",
     ...podcast,
     items: podcast.items.map((item, index) => index ? item : { ...item, imageUrl: "https://evil.example/1.jpg" }),
   }), /image/i);
+});
+test("constrains reporting timezone and Podcast ranking semantics", () => {
+  assert.throws(() => validateManifest({ ...valid, reportingTimezone: "Asia/Tokyo" }), /reportingTimezone/);
+  assert.throws(() => validateManifest({ ...valid, channel: "blog", reportingTimezone: "America/Los_Angeles" }), /reportingTimezone/);
+  const podcast = {
+    ...valid,
+    channel: "podcast",
+    rankingLabel: "前月（2026-06）増加再生数（YouTube Analytics・太平洋時間）",
+    items: valid.items.map((item, index) => ({
+      ...item,
+      episodeGuid: `guid-${index}`,
+      url: `https://podcasters.spotify.com/pod/show/go-ito/episodes/episode-${index}`,
+      imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${index}.jpg`,
+    })),
+  };
+  assert.equal(validateManifest(podcast), podcast);
+  assert.throws(() => validateManifest({ ...podcast, rankingMetric: "engagedViews" }), /Podcast rankingMetric/);
+  assert.throws(() => validateManifest({ ...podcast, rankingLabel: "人気コンテンツ" }), /Podcast rankingLabel/);
+  assert.throws(() => validateManifest({ ...podcast, rankingMode: "popular" }), /Podcast rankingMode/);
+});
+
+test("rejects duplicate Podcast YouTube IDs, episode GUIDs, and Spotify URLs", () => {
+  const podcast = {
+    ...valid,
+    channel: "podcast",
+    rankingLabel: "前月（2026-06）増加再生数（YouTube Analytics・太平洋時間）",
+    items: valid.items.map((item, index) => ({
+      ...item,
+      episodeGuid: `guid-${index}`,
+      url: `https://podcasters.spotify.com/pod/show/go-ito/episodes/episode-${index}`,
+      imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${index}.jpg`,
+    })),
+  };
+  for (const key of ["contentId", "episodeGuid", "url"]) {
+    assert.throws(() => validateManifest({
+      ...podcast,
+      items: podcast.items.map((item, index) => index === 1 ? { ...item, [key]: podcast.items[0][key] } : item),
+    }), /duplicate/i);
+  }
 });
 test("rejects fewer than three items", () => assert.throws(() => validateManifest({
   ...valid,
