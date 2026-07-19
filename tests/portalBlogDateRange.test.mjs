@@ -44,4 +44,6 @@ test("portal blog request sends explicit dates without the retired days paramete
   assert.match(fetchSource, /endDate/);
   assert.match(fetchSource, /limit:\s*"100"/);
   assert.doesNotMatch(fetchSource, /\bdays\b/);
+  assert.match(source, /let _blogCachePromise: Promise<BlogPost\[]> \| null = null/);
+  assert.match(fetchSource, /if \(_blogCachePromise\) return _blogCachePromise/);
 });
