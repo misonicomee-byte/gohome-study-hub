@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -19,6 +19,26 @@ const period = {
 
 function jsonResponse(body, { ok = true, status = 200 } = {}) {
   return { ok, status, json: async () => body };
+}
+
+function fixtureManifest(channel, marker = channel) {
+  return {
+    schemaVersion: 1,
+    channel,
+    period,
+    rankingMetric: "fixture",
+    rankingLabel: "fixture",
+    generatedAt: "2026-07-19T00:00:00Z",
+    items: [1, 2, 3].map((rank) => ({
+      rank,
+      contentId: `${marker}-${rank}`,
+      title: `${channel}-${rank}`,
+      url: `https://example.test/${channel}/${rank}`,
+      publishedAt: "2026-01-01",
+      metricValue: 4 - rank,
+      secondaryMetricValue: 1,
+    })),
+  };
 }
 
 test("CLI arguments are strict and reject unknown, duplicate, or missing values", () => {
@@ -49,6 +69,14 @@ test("YouTube access token uses a direct token without a network request", async
   assert.equal(calls, 0);
 });
 
+test("YouTube access token trims surrounding whitespace", async () => {
+  const token = await resolveYouTubeAccessToken({
+    env: { YOUTUBE_ACCESS_TOKEN: "  direct-test-token  " },
+    fetchImpl: async () => { throw new Error("must not fetch"); },
+  });
+  assert.equal(token, "direct-test-token");
+});
+
 test("YouTube access token refresh uses Google's OAuth token endpoint", async () => {
   let request;
   const token = await resolveYouTubeAccessToken({
@@ -59,7 +87,7 @@ test("YouTube access token refresh uses Google's OAuth token endpoint", async ()
     },
     fetchImpl: async (url, options) => {
       request = { url: String(url), options };
-      return jsonResponse({ access_token: "refreshed-test-token", expires_in: 3600 });
+      return jsonResponse({ access_token: "  refreshed-test-token  ", token_type: "Bearer", expires_in: 3600 });
     },
   });
 
@@ -72,6 +100,83 @@ test("YouTube access token refresh uses Google's OAuth token endpoint", async ()
     refresh_token: "refresh-test-token",
     client_id: "client-test-id",
     client_secret: "client-test-secret",
+  });
+});
+
+test("YouTube OAuth rejects non-Bearer token types without exposing response values", async () => {
+  const secret = "encoded%2Fsecret-secret";
+  await assert.rejects(
+    resolveYouTubeAccessToken({
+      credentials: {
+        mode: "refresh",
+        refreshToken: "secret",
+        clientId: "secret-secret",
+        clientSecret: secret,
+      },
+      fetchImpl: async () => jsonResponse({
+        access_token: `token-${secret}`,
+        token_type: `Basic-${secret}`,
+        error_description: `body-${secret}`,
+      }),
+    }),
+    (error) => /token type/i.test(error.message)
+      && !error.message.includes("secret")
+      && !error.message.includes(encodeURIComponent(secret)),
+  );
+});
+
+test("YouTube OAuth network and JSON errors expose only fixed stages and allowlisted codes", async (t) => {
+  const credentials = {
+    mode: "refresh",
+    refreshToken: "overlap",
+    clientId: "overlap-overlap",
+    clientSecret: "encoded%2Foverlap",
+  };
+  const secrets = [credentials.refreshToken, credentials.clientId, credentials.clientSecret];
+
+  await t.test("allowlisted network code", async () => {
+    await assert.rejects(
+      resolveYouTubeAccessToken({
+        credentials,
+        fetchImpl: async (_url, options) => {
+          const error = new Error(`request ${JSON.stringify(options)} ${secrets.join(" ")}`);
+          error.code = "ETIMEDOUT";
+          throw error;
+        },
+      }),
+      (error) => error.message === "YouTube OAuth token request failed code=ETIMEDOUT"
+        && secrets.every((secret) => !error.message.includes(secret)),
+    );
+  });
+
+  await t.test("untrusted network code", async () => {
+    await assert.rejects(
+      resolveYouTubeAccessToken({
+        credentials,
+        fetchImpl: async () => {
+          const error = new Error(secrets.join(" "));
+          error.code = `SECRET_${credentials.clientSecret}`;
+          throw error;
+        },
+      }),
+      (error) => error.message === "YouTube OAuth token request failed"
+        && secrets.every((secret) => !error.message.includes(secret)),
+    );
+  });
+
+  await t.test("invalid JSON", async () => {
+    await assert.rejects(
+      resolveYouTubeAccessToken({
+        credentials,
+        fetchImpl: async () => ({
+          ok: true,
+          status: 200,
+          json: async () => { throw new Error(secrets.join(" ")); },
+        }),
+      }),
+      (error) => error.message === "YouTube OAuth token response was not valid JSON"
+        && secrets.every((secret) => !error.message.includes(secret)),
+    );
   });
 });
 
@@ -212,4 +317,97 @@ test("collector failure leaves no mixed final manifest directory", async (t) => 
   );
   await assert.rejects(access(out));
   assert.deepEqual(await readdir(root), []);
+});
+
+test("an externally created empty output directory is never overwritten", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "monthly-ranking-external-output-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const out = join(root, "reserved");
+
+  await assert.rejects(
+    runCollection({
+      argv: ["--month", "2026-06", "--out", out],
+      env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec", YOUTUBE_ACCESS_TOKEN: "test-token" },
+      now,
+      collectors: {
+        youtube: async () => fixtureManifest("youtube"),
+        blog: async () => fixtureManifest("blog"),
+        instagram: async () => fixtureManifest("instagram"),
+      },
+      fileOps: {
+        mkdir: async (path, options) => {
+          if (path === out && options?.recursive === false) await mkdir(out);
+          return mkdir(path, options);
+        },
+      },
+    }),
+    /already exists|EEXIST/i,
+  );
+
+  assert.deepEqual(await readdir(out), []);
+  assert.deepEqual(await readdir(root), ["reserved"]);
+});
+
+test("a mid-promotion move failure removes the partial final directory", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "monthly-ranking-promotion-failure-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const out = join(root, "failed-promotion");
+  let moves = 0;
+
+  await assert.rejects(
+    runCollection({
+      argv: ["--month", "2026-06", "--out", out],
+      env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec", YOUTUBE_ACCESS_TOKEN: "test-token" },
+      now,
+      collectors: {
+        youtube: async () => fixtureManifest("youtube"),
+        blog: async () => fixtureManifest("blog"),
+        instagram: async () => fixtureManifest("instagram"),
+      },
+      fileOps: {
+        rename: async (from, to) => {
+          moves += 1;
+          if (moves === 2) {
+            const error = new Error("injected promotion failure");
+            error.code = "EIO";
+            throw error;
+          }
+          return rename(from, to);
+        },
+      },
+    }),
+    /injected promotion failure/,
+  );
+
+  await assert.rejects(access(out));
+  assert.deepEqual(await readdir(root), []);
+});
+
+test("concurrent collectors for one output have exactly one complete winner", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "monthly-ranking-concurrent-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const out = join(root, "shared");
+  const run = (marker) => runCollection({
+    argv: ["--month", "2026-06", "--out", out],
+    env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec", YOUTUBE_ACCESS_TOKEN: "test-token" },
+    now,
+    collectors: {
+      youtube: async () => fixtureManifest("youtube", marker),
+      blog: async () => fixtureManifest("blog", marker),
+      instagram: async () => fixtureManifest("instagram", marker),
+    },
+  });
+
+  const results = await Promise.allSettled([run("first"), run("second")]);
+  assert.equal(results.filter(({ status }) => status === "fulfilled").length, 1);
+  assert.equal(results.filter(({ status }) => status === "rejected").length, 1);
+  assert.match(results.find(({ status }) => status === "rejected").reason.message, /already exists|EEXIST|ENOTEMPTY/i);
+
+  const channels = await readdir(out);
+  assert.deepEqual(channels.sort(), ["blog", "instagram", "youtube"]);
+  const markers = await Promise.all(channels.map(async (channel) => {
+    const body = JSON.parse(await readFile(join(out, channel, "ranking.json"), "utf8"));
+    return body.items[0].contentId.split("-")[0];
+  }));
+  assert.equal(new Set(markers).size, 1);
 });

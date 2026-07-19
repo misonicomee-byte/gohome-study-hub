@@ -387,6 +387,93 @@ test("blog requests exact month boundaries and sorts all tie breakers determinis
   assert.equal(result.items.length, 3);
 });
 
+test("blog canonicalizes first-party article URLs and aggregates query duplicates", async () => {
+  const fetchImpl = async () => jsonResponse({
+    period: { startDate: period.startDate, endDate: period.endDate },
+    data: [
+      {
+        ...blogPost("winner", 7, 3, "2026-06-02"),
+        url: "https://www.gohome-clinic.com/2026/06/02/winner/?utm_source=test#section",
+      },
+      {
+        ...blogPost("winner", 6, 2, "2026-06-02"),
+        url: "https://gohome-clinic.com/2026/06/02/winner",
+      },
+      blogPost("second", 12, 4, "2026-06-03"),
+      blogPost("third", 11, 4, "2026-06-04"),
+    ],
+  });
+
+  const result = await collectBlogRanking({ gasUrl: "https://example.test/exec", period, fetchImpl });
+
+  assert.deepEqual(result.items.map((item) => item.contentId), [
+    "https://gohome-clinic.com/2026/06/02/winner/",
+    blogPost("second", 0, 0, "2026-06-03").url,
+    blogPost("third", 0, 0, "2026-06-04").url,
+  ]);
+  assert.equal(result.items[0].metricValue, 13);
+  assert.equal(result.items[0].secondaryMetricValue, 5);
+  assert.equal(result.items[0].publishedAt, "2026-06-02");
+  assert.equal(result.items[0].title, "blog winner");
+});
+
+test("blog rejects noncanonical hosts, protocols, ports, and invalid article dates", async (t) => {
+  const invalidUrls = [
+    "http://gohome-clinic.com/2026/06/01/post/",
+    "https://gohome-clinic.com.example/2026/06/01/post/",
+    "https://example.com/2026/06/01/post/",
+    "https://gohome-clinic.com:8443/2026/06/01/post/",
+    "https://gohome-clinic.com/1999/06/01/post/",
+    "https://gohome-clinic.com/2026/02/30/post/",
+    "https://gohome-clinic.com/news/2026/06/01/post/",
+  ];
+
+  for (const invalidUrl of invalidUrls) {
+    await t.test(invalidUrl, async () => {
+      const data = [blogPost("a", 3, 1), blogPost("b", 2, 1), blogPost("c", 1, 1)];
+      data[0] = { ...data[0], url: invalidUrl };
+      await assert.rejects(
+        collectBlogRanking({
+          gasUrl: "https://example.test/exec",
+          period,
+          fetchImpl: async () => jsonResponse({
+            period: { startDate: period.startDate, endDate: period.endDate },
+            data,
+          }),
+        }),
+        /url|host|article|date/i,
+      );
+    });
+  }
+});
+
+test("blog rejects conflicting metadata for one canonical article", async (t) => {
+  const base = [
+    blogPost("same", 3, 1, "2026-06-01"),
+    blogPost("same", 2, 1, "2026-06-01"),
+    blogPost("b", 2, 1),
+    blogPost("c", 1, 1),
+  ];
+  for (const conflicting of [
+    { ...base[1], title: "different title" },
+    { ...base[1], date: "2026-06-02" },
+  ]) {
+    await t.test(conflicting.title + conflicting.date, async () => {
+      await assert.rejects(
+        collectBlogRanking({
+          gasUrl: "https://example.test/exec",
+          period,
+          fetchImpl: async () => jsonResponse({
+            period: { startDate: period.startDate, endDate: period.endDate },
+            data: [base[0], conflicting, ...base.slice(2)],
+          }),
+        }),
+        /conflicting|date|title/i,
+      );
+    });
+  }
+});
+
 test("blog requires an exact response period and three valid unique items", async (t) => {
   const valid = {
     period: { startDate: period.startDate, endDate: period.endDate },
@@ -467,40 +554,25 @@ test("Instagram exact mode validates the month and sorts by delta, instant, then
   assert.match(result.rankingLabel, /views.*増加/i);
 });
 
-test("Instagram explicit partial response uses the initial published-month current-views fallback", async () => {
-  const requests = [];
-  const fetchImpl = async (url) => {
-    const parsed = new URL(url);
-    requests.push(parsed);
-    if (parsed.searchParams.get("api") === "instagram-monthly-ranking") {
-      return jsonResponse({ partial: true, data: [] });
-    }
-    return jsonResponse({ data: [
-      instagramPost("before", { timestamp: "2026-05-31T14:59:59Z", views: 999 }),
-      instagramPost("a", { timestamp: "2026-06-20T09:00:00+09:00", views: 100, totalInteractions: 20 }),
-      instagramPost("z", { timestamp: "2026-06-20T00:00:00Z", views: 100, totalInteractions: 20 }),
-      instagramPost("winner", { timestamp: "2026-06-01T00:00:00+09:00", views: 101 }),
-      instagramPost("after", { timestamp: "2026-06-30T15:00:00Z", views: 999 }),
-    ] });
-  };
-
-  const result = await collectInstagramRanking({ gasUrl: "https://example.test/exec", period, fetchImpl });
-
-  assert.equal(requests.length, 2);
-  assert.deepEqual(Object.fromEntries(requests[1].searchParams), { api: "instagram-posts", limit: "100" });
-  assert.deepEqual(result.items.map((item) => item.contentId), ["winner", "z", "a"]);
-  assert.equal(result.rankingMetric, "currentViewsOfPostsPublishedInMonth");
-  assert.equal(result.rankingMode, "initialPublishedMonthCurrentViews");
-  assert.match(result.rankingLabel, /現在views/i);
-  assert.match(result.rankingLabel, /初回限定/);
-  assert.match(result.rankingLabel, /増加数ではありません/);
+test("Instagram explicit partial response without a known boundary reason fails closed", async () => {
+  let requests = 0;
+  await assert.rejects(
+    collectInstagramRanking({
+      gasUrl: "https://example.test/exec",
+      period,
+      fetchImpl: async () => {
+        requests += 1;
+        return jsonResponse({ partial: true, data: [] });
+      },
+    }),
+    /partial/i,
+  );
+  assert.equal(requests, 1);
 });
 
 test("Instagram falls back only for known unavailable boundary errors", async (t) => {
   const knownMessages = [
     "Instagram snapshot store is not configured",
-    "Instagram snapshot sheet schema is missing",
-    "instagram_daily snapshot sheet is missing",
     "Complete month boundary snapshots are required",
   ];
   for (const message of knownMessages) {
@@ -518,8 +590,30 @@ test("Instagram falls back only for known unavailable boundary errors", async (t
     });
   }
 
+  for (const code of [
+    "INSTAGRAM_SNAPSHOT_STORE_NOT_CONFIGURED",
+    "INSTAGRAM_COMPLETE_MONTH_BOUNDARY_SNAPSHOTS_REQUIRED",
+  ]) {
+    await t.test(code, async () => {
+      let requests = 0;
+      const fetchImpl = async () => {
+        requests += 1;
+        return requests === 1
+          ? jsonResponse({ partial: true, code })
+          : jsonResponse({ data: [instagramPost("a"), instagramPost("b"), instagramPost("c")] });
+      };
+      const result = await collectInstagramRanking({ gasUrl: "https://example.test/exec", period, fetchImpl });
+      assert.equal(result.rankingMode, "initialPublishedMonthCurrentViews");
+      assert.equal(requests, 2);
+    });
+  }
+
   for (const failure of [
+    { response: jsonResponse({ error: "Instagram snapshot sheet schema is missing" }), expected: /schema/i },
+    { response: jsonResponse({ error: "instagram_daily snapshot sheet is missing" }), expected: /sheet/i },
     { response: jsonResponse({ error: "Meta API authentication failed" }), expected: /authentication/i },
+    { response: jsonResponse({ partial: true, error: "temporary snapshot failure" }), expected: /temporary/i },
+    { response: jsonResponse({ partial: true, code: "UNKNOWN_BOUNDARY_ERROR" }), expected: /partial/i },
     { response: jsonResponse({}, { ok: false, status: 503 }), expected: /status=503/i },
   ]) {
     await t.test(String(failure.expected), async () => {

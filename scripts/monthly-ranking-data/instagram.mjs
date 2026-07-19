@@ -2,9 +2,11 @@ import { validateManifest } from "./schema.mjs";
 
 const BOUNDARY_UNAVAILABLE_ERRORS = new Set([
   "Instagram snapshot store is not configured",
-  "Instagram snapshot sheet schema is missing",
-  "instagram_daily snapshot sheet is missing",
   "Complete month boundary snapshots are required",
+]);
+const BOUNDARY_UNAVAILABLE_CODES = new Set([
+  "INSTAGRAM_SNAPSHOT_STORE_NOT_CONFIGURED",
+  "INSTAGRAM_COMPLETE_MONTH_BOUNDARY_SNAPSHOTS_REQUIRED",
 ]);
 
 function isObject(value) {
@@ -114,6 +116,11 @@ function responseError(json) {
   return json.error;
 }
 
+function hasKnownBoundaryUnavailableReason(json, error) {
+  return BOUNDARY_UNAVAILABLE_ERRORS.has(error)
+    || (typeof json.code === "string" && BOUNDARY_UNAVAILABLE_CODES.has(json.code));
+}
+
 function expectedBoundaryDate(period) {
   const instant = Date.parse(`${period.endDate}T00:00:00Z`) + 24 * 60 * 60 * 1000;
   return new Date(instant).toISOString().slice(0, 10);
@@ -199,10 +206,15 @@ export async function collectInstagramRanking({ gasUrl, period, fetchImpl = fetc
   const json = await requestJson(url, fetchImpl);
   const error = responseError(json);
   if (error) {
-    if (!BOUNDARY_UNAVAILABLE_ERRORS.has(error)) throw new Error(error);
+    if (!hasKnownBoundaryUnavailableReason(json, error)) throw new Error(error);
     return collectFallback({ url, period, fetchImpl });
   }
-  if (json.partial === true) return collectFallback({ url, period, fetchImpl });
+  if (json.partial === true) {
+    if (hasKnownBoundaryUnavailableReason(json, null)) {
+      return collectFallback({ url, period, fetchImpl });
+    }
+    throw new Error("Instagram exact response is partial without a known boundary-unavailable reason");
+  }
   if (json.partial !== false) throw new Error("Instagram exact response partial must be false");
   requireExactPeriod(json.period, period);
   const posts = sortedTopThree(json.data, "exact");

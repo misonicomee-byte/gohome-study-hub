@@ -26,6 +26,26 @@ function requireHttpUrl(value, name) {
   return parsed;
 }
 
+function canonicalArticle(value) {
+  const parsed = requireHttpUrl(value, "article");
+  if (parsed.protocol !== "https:"
+    || !["gohome-clinic.com", "www.gohome-clinic.com"].includes(parsed.hostname)
+    || parsed.port) {
+    throw new Error("blog returned invalid article url");
+  }
+
+  const dateMatch = /^\/(20\d{2})\/(\d{2})\/(\d{2})\//.exec(parsed.pathname);
+  if (!dateMatch) throw new Error("blog returned invalid article url path");
+  const publishedAt = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+  const publishedInstant = requireCalendarDate(publishedAt);
+  const pathname = `${parsed.pathname.replace(/\/+$/, "")}/`;
+  return {
+    id: `https://gohome-clinic.com${pathname}`,
+    publishedAt,
+    publishedInstant,
+  };
+}
+
 function requireCalendarDate(value) {
   const match = typeof value === "string" ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(value) : null;
   if (!match) throw new Error("blog returned invalid publication date");
@@ -75,26 +95,50 @@ function requireExactPeriod(value, period) {
 
 function normalizePosts(data) {
   if (!Array.isArray(data)) throw new Error("blog returned invalid payload data");
-  const seenIds = new Set();
-  return data.map((post) => {
+  const postsById = new Map();
+  for (const post of data) {
     if (!isObject(post)) throw new Error("blog returned invalid payload item");
-    const parsedUrl = requireHttpUrl(post.url, "article");
-    const id = parsedUrl.href;
-    if (seenIds.has(id)) throw new Error(`blog returned duplicate content id ${id}`);
-    seenIds.add(id);
-    if (typeof post.title !== "string" || !post.title.trim()) {
-      throw new Error(`blog returned invalid title for ${id}`);
+    const article = canonicalArticle(post.url);
+    const date = post.date;
+    const publishedInstant = requireCalendarDate(date);
+    if (date !== article.publishedAt || publishedInstant !== article.publishedInstant) {
+      throw new Error(`blog returned publication date conflicting with article url ${article.id}`);
     }
-    return {
-      id,
-      title: post.title.trim(),
-      url: id,
-      date: post.date,
-      publishedInstant: requireCalendarDate(post.date),
-      pageViews: requireMetric(post.pageViews, "pageViews"),
-      totalUsers: requireMetric(post.totalUsers, "totalUsers"),
-    };
-  });
+    if (typeof post.title !== "string") throw new Error(`blog returned invalid title for ${article.id}`);
+    const title = post.title.trim();
+    const pageViews = requireMetric(post.pageViews, "pageViews");
+    const totalUsers = requireMetric(post.totalUsers, "totalUsers");
+    const existing = postsById.get(article.id);
+    if (!existing) {
+      postsById.set(article.id, {
+        id: article.id,
+        title,
+        url: article.id,
+        date,
+        publishedInstant,
+        pageViews,
+        totalUsers,
+      });
+      continue;
+    }
+    if (existing.date !== date) {
+      throw new Error(`blog returned conflicting publication dates for ${article.id}`);
+    }
+    if (existing.title && title && existing.title !== title) {
+      throw new Error(`blog returned conflicting titles for ${article.id}`);
+    }
+    if (!existing.title && title) existing.title = title;
+    existing.pageViews += pageViews;
+    // GA4 user counts are not additive sets. Summing is the only consistent
+    // behavior available when duplicate canonical rows lack user identifiers.
+    existing.totalUsers += totalUsers;
+  }
+
+  const posts = [...postsById.values()];
+  for (const post of posts) {
+    if (!post.title) throw new Error(`blog returned invalid title for ${post.id}`);
+  }
+  return posts;
 }
 
 export async function collectBlogRanking({ gasUrl, period, fetchImpl = fetch }) {
