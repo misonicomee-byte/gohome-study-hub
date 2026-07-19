@@ -43,10 +43,13 @@ function requireMetric(value, name) {
 }
 
 function parseTimestamp(value) {
-  const match = typeof value === "string"
-    ? /^(\d{4})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.\d+)?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value)
+  const normalized = typeof value === "string"
+    ? value.replace(/([+-]\d{2})(\d{2})$/u, "$1:$2")
+    : value;
+  const match = typeof normalized === "string"
+    ? /^(\d{4})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.\d+)?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(normalized)
     : null;
-  if (!match || !Number.isFinite(Date.parse(value))) throw new Error("Instagram returned invalid timestamp");
+  if (!match || !Number.isFinite(Date.parse(normalized))) throw new Error("Instagram returned invalid timestamp");
   const [, rawYear, rawMonth, rawDay] = match;
   const calendarDate = new Date(0);
   calendarDate.setUTCHours(0, 0, 0, 0);
@@ -56,7 +59,7 @@ function parseTimestamp(value) {
     || calendarDate.getUTCDate() !== Number(rawDay)) {
     throw new Error("Instagram returned invalid timestamp");
   }
-  return Date.parse(value);
+  return Date.parse(normalized);
 }
 
 function jstDate(instant) {
@@ -118,7 +121,7 @@ function responseError(json) {
 
 function hasKnownBoundaryUnavailableReason(json, error) {
   return BOUNDARY_UNAVAILABLE_ERRORS.has(error)
-    || (typeof json.code === "string" && BOUNDARY_UNAVAILABLE_CODES.has(json.code));
+    || (typeof json.errorCode === "string" && BOUNDARY_UNAVAILABLE_CODES.has(json.errorCode));
 }
 
 function expectedBoundaryDate(period) {

@@ -644,8 +644,12 @@ test("Instagram falls back only for known unavailable boundary errors", async (t
       const fetchImpl = async () => {
         requests += 1;
         return requests === 1
-          ? jsonResponse({ partial: true, code })
-          : jsonResponse({ data: [instagramPost("a"), instagramPost("b"), instagramPost("c")] });
+          ? jsonResponse({ error: "boundary unavailable", errorCode: code, data: [] })
+          : jsonResponse({ data: [
+            instagramPost("a", { timestamp: "2026-06-10T00:00:00+0000" }),
+            instagramPost("b"),
+            instagramPost("c"),
+          ] });
       };
       const result = await collectInstagramRanking({ gasUrl: "https://example.test/exec", period, fetchImpl });
       assert.equal(result.rankingMode, "initialPublishedMonthCurrentViews");
