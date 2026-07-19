@@ -86,6 +86,12 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          RANKING_SHORTS_BGM_LICENSE_CONFIRMED: "true"
+          RANKING_SHORTS_BGM_YOUTUBE: assets/monthly-ranking-shorts/bgm/youtube-stable-audio.m4a
+          RANKING_SHORTS_BGM_INSTAGRAM: assets/monthly-ranking-shorts/bgm/instagram-stable-audio.m4a
+          RANKING_SHORTS_BGM_BLOG: assets/monthly-ranking-shorts/bgm/blog-stable-audio.m4a
+          RANKING_SHORTS_BGM_PODCAST: assets/monthly-ranking-shorts/bgm/podcast-stable-audio.m4a
+          RANKING_SHORTS_SEEDANCE: assets/monthly-ranking-shorts/motion/ranking-seedance.mp4
         run: |
           npm run ranking:shorts -- \
             --month "${{ needs.select.outputs.month }}" \

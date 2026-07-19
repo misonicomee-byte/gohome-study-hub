@@ -42,6 +42,7 @@ const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(MODULE_DIR, "../..");
 const DEFAULT_HISTORY_PATH = path.join(REPOSITORY_ROOT, "config/monthly-ranking-style-history.json");
 const RENDERER_PATH = path.join(REPOSITORY_ROOT, "scripts/ranking-shorts-renderer/main.py");
+const MEDIA_BGM_DIR = path.join(REPOSITORY_ROOT, "assets/monthly-ranking-shorts/bgm");
 
 function requireMonth(value) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value ?? "") || value.startsWith("0000-")) {
@@ -253,7 +254,7 @@ function solidPng(channel, rank, width = 720, height = 1280) {
 
 export async function writeProceduralBgm(target) {
   const sampleRate = 8000;
-  const seconds = 54;
+  const seconds = 42;
   const samples = sampleRate * seconds;
   const data = Buffer.alloc(samples * 2);
   for (let index = 0; index < samples; index += 1) {
@@ -525,10 +526,35 @@ async function sha256File(target) {
   return hash.digest("hex");
 }
 
-async function resolveBgm(outDir, env) {
-  const explicit = env.RANKING_SHORTS_BGM?.trim();
+async function regularMediaFile(target, suffixes, label) {
+  const resolved = path.resolve(target);
+  const [metadata, lexical] = await Promise.all([stat(resolved), lstat(resolved)]);
+  if (!metadata.isFile() || lexical.isSymbolicLink() || !suffixes.has(path.extname(resolved).toLowerCase())) {
+    throw new Error(`${label} must be a regular supported media file`);
+  }
+  return resolved;
+}
+
+async function findBgmMaster(channel) {
+  for (const suffix of [".m4a", ".wav", ".mp3", ".aac"]) {
+    const candidate = path.join(MEDIA_BGM_DIR, `${channel}-stable-audio${suffix}`);
+    if (await pathExists(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function resolveBgm(outDir, env, channel) {
+  const channelKey = `RANKING_SHORTS_BGM_${channel.toUpperCase()}`;
+  const explicit = env[channelKey]?.trim() || env.RANKING_SHORTS_BGM?.trim();
   if (!explicit) {
-    const bgmPath = await writeProceduralBgm(path.join(outDir, "shared", "procedural-bgm.wav"));
+    const master = await findBgmMaster(channel);
+    if (master) {
+      return {
+        path: master,
+        summary: { source: "stable-audio-master", sha256: await sha256File(master), licenseConfirmed: true },
+      };
+    }
+    const bgmPath = await writeProceduralBgm(path.join(outDir, "shared", `${channel}-procedural-bgm.wav`));
     return {
       path: bgmPath,
       summary: { source: "procedural", sha256: await sha256File(bgmPath), licenseConfirmed: true },
@@ -537,14 +563,29 @@ async function resolveBgm(outDir, env) {
   if (env.RANKING_SHORTS_BGM_LICENSE_CONFIRMED !== "true") {
     throw new Error("explicit BGM requires RANKING_SHORTS_BGM_LICENSE_CONFIRMED=true");
   }
-  const target = path.resolve(explicit);
-  const [metadata, lexical] = await Promise.all([stat(target), lstat(target)]);
-  if (!metadata.isFile() || lexical.isSymbolicLink() || !new Set([".wav", ".mp3", ".m4a", ".aac"]).has(path.extname(target).toLowerCase())) {
-    throw new Error("explicit BGM must be a regular supported audio file");
-  }
+  const target = await regularMediaFile(
+    explicit,
+    new Set([".wav", ".mp3", ".m4a", ".aac"]),
+    "explicit BGM",
+  );
   return {
     path: target,
     summary: { source: "explicit", sha256: await sha256File(target), licenseConfirmed: true },
+  };
+}
+
+async function resolveSeedance(env, channel) {
+  const channelKey = `RANKING_SHORTS_SEEDANCE_${channel.toUpperCase()}`;
+  const explicit = env[channelKey]?.trim() || env.RANKING_SHORTS_SEEDANCE?.trim();
+  if (!explicit) return null;
+  const target = await regularMediaFile(
+    explicit,
+    new Set([".mp4", ".mov", ".webm"]),
+    "Seedance clip",
+  );
+  return {
+    path: target,
+    summary: { source: "explicit", sha256: await sha256File(target) },
   };
 }
 
@@ -635,14 +676,21 @@ export async function runMonthlyRanking({
     const stageSuffix = path.basename(runStage).slice(`.${outputName}.tmp-`.length);
     completed = path.join(outputParent, `.${outputName}.complete-${stageSuffix}`);
 
-    const bgm = await resolveBgm(runStage, env);
     const channels = {};
+    const bgm = {};
+    const seedance = {};
     const historyRecords = [];
     for (const currentChannel of selectedChannels) {
-      let category = "collection";
+      let category = "media";
       let channelStage;
       try {
+        const channelBgm = await resolveBgm(runStage, env, currentChannel);
+        const channelSeedance = await resolveSeedance(env, currentChannel);
+        bgm[currentChannel] = channelBgm.summary;
+        if (channelSeedance) seedance[currentChannel] = channelSeedance.summary;
+
         channelStage = await mkdtemp(path.join(runStage, `.channel-${currentChannel}.tmp-`));
+        category = "collection";
         const collectorRoot = path.join(channelStage, ".collector");
         const collectorOut = path.join(collectorRoot, "result");
         await spawnImpl("npm", [
@@ -679,16 +727,21 @@ export async function runMonthlyRanking({
         category = "render";
         const candidateDir = path.join(channelStage, "candidate");
         const videoPath = path.join(candidateDir, "ranking-short.mp4");
-        await spawnImpl(env.RANKING_SHORTS_PYTHON || "python3", [
+        const rendererArgs = [
           RENDERER_PATH,
           "--manifest", manifestPath,
           "--assets", assetsDir,
           "--placement", style.placement,
           "--motion", style.motion,
           "--resolution", "1080x1920",
-          "--bgm", bgm.path,
+          "--bgm", channelBgm.path,
           "--out", videoPath,
-        ], { cwd: REPOSITORY_ROOT, env: rendererEnvironment(env) });
+        ];
+        if (channelSeedance) rendererArgs.push("--seedance", channelSeedance.path);
+        await spawnImpl(env.RANKING_SHORTS_PYTHON || "python3", rendererArgs, {
+          cwd: REPOSITORY_ROOT,
+          env: rendererEnvironment(env),
+        });
 
         category = "verification";
         await verifyRendererArtifacts(videoPath);
@@ -714,7 +767,8 @@ export async function runMonthlyRanking({
       month,
       generatedAt: new Date().toISOString(),
       publishAttempted: false,
-      bgm: bgm.summary,
+      bgm,
+      seedance,
       channels,
     };
     await atomicWrite(path.join(runStage, "run-summary.json"), `${JSON.stringify(summary, null, 2)}\n`);

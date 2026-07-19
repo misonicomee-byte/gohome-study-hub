@@ -19,7 +19,8 @@ class QaError(RuntimeError):
     """Raised when a rendered candidate fails a non-negotiable QA gate."""
 
 
-CONTACT_SHEET_EXPECTED_FRAMES = 27
+EXPECTED_DURATION_SECONDS = 42
+CONTACT_SHEET_EXPECTED_FRAMES = 21
 CONTACT_SHEET_FRAME_TOLERANCE = 0
 
 
@@ -89,8 +90,13 @@ def _validate_probe(probe, config):
         duration = float(probe["format"]["duration"])
     except (KeyError, TypeError, ValueError):
         raise QaError("video duration metadata is invalid") from None
-    if not math.isfinite(duration) or not 53.5 <= duration <= 54.5:
-        raise QaError("video duration must be between 53.5 and 54.5 seconds")
+    if (
+        not math.isfinite(duration)
+        or not EXPECTED_DURATION_SECONDS - 0.5
+        <= duration
+        <= EXPECTED_DURATION_SECONDS + 0.5
+    ):
+        raise QaError("video duration must be between 41.5 and 42.5 seconds")
     return video, audio, duration
 
 

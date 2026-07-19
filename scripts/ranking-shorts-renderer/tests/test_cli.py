@@ -53,7 +53,7 @@ def valid_manifest():
     }
 
 
-def probe_payload(width=720, height=1280, fps="30/1", duration="54.0"):
+def probe_payload(width=720, height=1280, fps="30/1", duration="42.0"):
     return {
         "streams": [
             {
@@ -276,7 +276,7 @@ class CliTests(unittest.TestCase):
             self.assertNotIn("治ります", copy)
             captions = json.loads(captions_json.read_text(encoding="utf-8"))
             self.assertEqual(captions[0]["start"], 0)
-            self.assertEqual(captions[-1]["end"], 54)
+            self.assertEqual(captions[-1]["end"], 42)
             self.assertFalse((root / "draft" / "video.mp4").exists())
 
     def test_publication_copy_preserves_exact_initial_month_ranking_mode(self):
@@ -398,6 +398,40 @@ class CliTests(unittest.TestCase):
             self.assertFalse((output.parent / "post_caption.txt").exists())
             self.assertFalse((output.parent / "captions.json").exists())
 
+    def test_optional_seedance_clip_is_validated_and_staged_for_renderer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, assets, bgm, narration = self.make_project(root)
+            seedance = root / "seedance.mp4"
+            seedance.write_bytes(b"synthetic-seedance")
+            output = root / "candidate" / "video.mp4"
+            seen = {}
+
+            def fake_render(project, parsed_manifest, config, key, draft, **kwargs):
+                del parsed_manifest, config, key, kwargs
+                seen["seedance"] = (project / "seedance.mp4").resolve()
+                draft.parent.mkdir(parents=True, exist_ok=True)
+                draft.write_bytes(b"synthetic-mp4")
+                return draft
+
+            def fake_qa(video, config, report_path, sheet_path, **kwargs):
+                del video, config, kwargs
+                report_path.write_text("{}")
+                Image.new("RGB", (10, 10)).save(sheet_path)
+
+            argv = self.argv(manifest, assets, bgm, output, narration)
+            argv.extend(["--seedance", str(seedance)])
+            result = self.cli.run_cli(
+                argv,
+                environ={},
+                which=lambda name: f"/bin/{name}",
+                render_func=fake_render,
+                qa_func=fake_qa,
+            )
+
+            self.assertEqual(result, output.resolve())
+            self.assertEqual(seen["seedance"], seedance.resolve())
+
     def test_documentation_covers_seedance_placements_and_bgm_license_boundary(self):
         text = DOC_PATH.read_text(encoding="utf-8")
         for required in (
@@ -423,7 +457,7 @@ class QaTests(unittest.TestCase):
         *,
         black=False,
         decode_failure=False,
-        contact_frames=27,
+        contact_frames=21,
         calls=None,
     ):
         def runner(command, **kwargs):
@@ -470,7 +504,7 @@ class QaTests(unittest.TestCase):
             body = json.loads(report.read_text(encoding="utf-8"))
             self.assertTrue(body["passed"])
             self.assertEqual(len(body["sha256"]), 64)
-            self.assertEqual(body["duration"], 54.0)
+            self.assertEqual(body["duration"], 42.0)
             self.assertEqual(body["blackSegments"], [])
             self.assertTrue(sheet.is_file())
             self.assertEqual(result.report_path, report)
@@ -486,13 +520,13 @@ class QaTests(unittest.TestCase):
             root = Path(temporary)
             video = root / "draft.mp4"
             video.write_bytes(b"synthetic-mp4")
-            with self.assertRaisesRegex(QaError, "27"):
+            with self.assertRaisesRegex(QaError, "21"):
                 run_qa(
                     video,
                     RenderConfig(720, 1280),
                     root / "report.json",
                     root / "sheet.jpg",
-                    runner=self.fake_runner(probe_payload(), contact_frames=26),
+                    runner=self.fake_runner(probe_payload(), contact_frames=20),
                 )
 
     def test_qa_rejects_stream_fps_dimension_duration_and_black_failures(self):

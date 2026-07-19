@@ -7,11 +7,14 @@ from PIL import Image, ImageChops, ImageDraw
 from ranking_shorts.frames import (
     _grapheme_clusters,
     _scaled_center_mask,
+    display_title,
     fit_asset,
+    pixel_lines,
     render_rank_frame,
     render_transition_frame,
     semantic_lines,
 )
+from ranking_shorts.layout import load_font
 from ranking_shorts.layout import safe_area
 from ranking_shorts.model import RenderConfig
 
@@ -45,6 +48,42 @@ class FrameTests(unittest.TestCase):
     def test_semantic_lines_preserve_text(self):
         text = "訪問診療クリニックの看護師の仕事"
         self.assertEqual("".join(semantic_lines(text, 12)), text)
+
+    def test_display_title_removes_repeated_seo_suffix_and_caps_length(self):
+        title = (
+            "高齢者の隠れ脱水を見抜く方法｜家族が気づくべき7つのサイン"
+            "【名古屋・訪問診療】 | 名古屋市で訪問診療ならごうホームクリニックへ"
+        )
+        self.assertEqual(display_title(title), "高齢者の隠れ脱水を見抜く方法")
+        self.assertEqual(display_title("訪問診療" * 20), "訪問診療" * 7 + "…")
+
+    def test_display_title_normalizes_whitespace_and_never_returns_blank(self):
+        self.assertEqual(display_title("  在宅で\n点滴はできる  ｜ 補足"), "在宅で 点滴はできる")
+        self.assertEqual(display_title("｜｜"), "｜｜")
+
+    def test_pixel_lines_wrap_by_rendered_width_and_ellipsize(self):
+        draw = ImageDraw.Draw(Image.new("RGB", (720, 1280)))
+        font = load_font(24)
+        text = "【2026年改定】訪問看護遠隔診療補助料の届出と算定について詳しく解説"
+        lines = pixel_lines(draw, text, font, max_width=210, max_lines=3)
+
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[-1].endswith("…"))
+        self.assertTrue(all(draw.textlength(line, font=font) <= 210 for line in lines))
+
+    def test_pixel_lines_prefer_semantic_punctuation_without_exceeding_width(self):
+        draw = ImageDraw.Draw(Image.new("RGB", (720, 1280)))
+        font = load_font(24)
+        lines = pixel_lines(
+            draw,
+            "在宅で点滴はできる、訪問診療の種類と仕組み",
+            font,
+            max_width=220,
+            max_lines=3,
+        )
+
+        self.assertTrue(all(draw.textlength(line, font=font) <= 220 for line in lines))
+        self.assertLessEqual(len(lines), 3)
 
     def test_grapheme_clusters_keep_combining_marks_and_variation_selectors(self):
         text = "は\u3099A\ufe0f木\U000e0100"
@@ -94,18 +133,25 @@ class FrameTests(unittest.TestCase):
 
                 self.assert_bounds_inside_safe_area(label_bounds, canvas)
 
-    def test_unrenderable_long_text_fails_closed_at_both_resolutions(self):
-        cases = (
-            (SimpleNamespace(ranking_label="指標ラベル" * 60), "", "ranking label"),
-            (SimpleNamespace(ranking_label=""), "訪問診療" * 200, "title"),
-        )
+    def test_long_label_is_compacted_instead_of_failing_or_overflowing(self):
+        manifest = SimpleNamespace(ranking_label="指標ラベル" * 60)
+        item = SimpleNamespace(rank=1, title="", metric_value=12345)
         for canvas in ((1080, 1920), (720, 1280)):
-            config = RenderConfig(width=canvas[0], height=canvas[1])
-            for manifest, title, expected in cases:
-                with self.subTest(canvas=canvas, field=expected):
-                    item = SimpleNamespace(rank=1, title=title, metric_value=12345)
-                    with self.assertRaisesRegex(ValueError, expected):
-                        render_rank_frame(manifest, item, self.asset, 0, config)
+            with self.subTest(canvas=canvas):
+                result = render_rank_frame(
+                    manifest, item, self.asset, 0, RenderConfig(*canvas)
+                )
+                self.assertEqual(result.size, canvas)
+
+    def test_long_title_is_compacted_instead_of_failing_or_overflowing(self):
+        manifest = SimpleNamespace(ranking_label="")
+        item = SimpleNamespace(rank=1, title="訪問診療" * 200, metric_value=12345)
+        for canvas in ((1080, 1920), (720, 1280)):
+            with self.subTest(canvas=canvas):
+                result = render_rank_frame(
+                    manifest, item, self.asset, 0, RenderConfig(*canvas)
+                )
+                self.assertEqual(result.size, canvas)
 
     def test_huge_finite_metric_is_width_fitted_at_both_resolutions(self):
         manifest = SimpleNamespace(ranking_label="")

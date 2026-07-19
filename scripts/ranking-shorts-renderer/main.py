@@ -65,6 +65,7 @@ class Context:
     lock: Path
     api_key: str
     narration: Path | None
+    seedance: Path | None
 
 
 def build_parser():
@@ -77,6 +78,7 @@ def build_parser():
     parser.add_argument("--bgm", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--narration", type=Path, help="prebuilt WAV for offline/test rendering")
+    parser.add_argument("--seedance", type=Path, help="optional Seedance motion clip for hook and chapter backgrounds")
     return parser
 
 
@@ -160,6 +162,11 @@ def preflight(args, environ=os.environ, which=shutil.which):
     api_key = environ.get("GEMINI_API_KEY", "").strip()
     if narration is None and not api_key:
         raise ValueError("GEMINI_API_KEY is required without --narration")
+    seedance = args.seedance.expanduser().resolve() if args.seedance else None
+    if seedance is not None and (
+        not seedance.is_file() or seedance.suffix.lower() not in VIDEO_SUFFIXES
+    ):
+        raise ValueError("Seedance clip must be an existing supported video file")
 
     lexical_output = Path(os.path.abspath(args.out.expanduser()))
     if lexical_output.suffix.lower() != ".mp4":
@@ -204,6 +211,7 @@ def preflight(args, environ=os.environ, which=shutil.which):
         lock=lock,
         api_key=api_key,
         narration=narration,
+        seedance=seedance,
     )
 
 
@@ -310,6 +318,8 @@ def run_cli(argv=None, *, environ=os.environ, which=shutil.which, render_func=re
             for rank, asset in runtime.assets.items():
                 (project / f"rank-{rank}{asset.suffix.lower()}").symlink_to(asset)
             (project / f"bgm{runtime.bgm.suffix.lower()}").symlink_to(runtime.bgm)
+            if runtime.seedance is not None:
+                (project / f"seedance{runtime.seedance.suffix.lower()}").symlink_to(runtime.seedance)
             render_func(
                 project,
                 runtime.manifest,

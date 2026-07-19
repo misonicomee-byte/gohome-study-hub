@@ -133,7 +133,7 @@ test("package exposes the ranking:shorts CLI without a publishing command", asyn
   assert.doesNotMatch(packageJson.scripts["ranking:shorts"], /publish|upload/i);
 });
 
-test("procedural BGM is deterministic, valid PCM WAV, and 54 seconds", async () => {
+test("procedural BGM is deterministic, valid PCM WAV, and 42 seconds", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ranking-bgm-"));
   const first = path.join(root, "first.wav");
   const second = path.join(root, "second.wav");
@@ -145,7 +145,7 @@ test("procedural BGM is deterministic, valid PCM WAV, and 54 seconds", async () 
   assert.equal(a.subarray(8, 12).toString("ascii"), "WAVE");
   const sampleRate = a.readUInt32LE(24);
   const dataBytes = a.readUInt32LE(40);
-  assert.equal(dataBytes / (sampleRate * 2), 54);
+  assert.equal(dataBytes / (sampleRate * 2), 42);
 });
 
 test("assets use YouTube thumbnails, blog OG images, and matching Instagram post IDs", async () => {
@@ -290,7 +290,11 @@ test("one failed render does not stop other channels and post_caption is copy au
   const root = await mkdtemp(path.join(tmpdir(), "ranking-run-"));
   const outDir = path.join(root, "out");
   const historyPath = path.join(root, "history.json");
+  const youtubeBgm = path.join(root, "youtube.m4a");
+  const seedanceClip = path.join(root, "ranking-motion.mp4");
   await writeFile(historyPath, '{"schemaVersion":1,"entries":[]}\n');
+  await writeFile(youtubeBgm, "licensed fixture audio");
+  await writeFile(seedanceClip, "seedance fixture video");
   const calls = [];
   const spawnImpl = async (command, args, options) => {
     calls.push([command, ...args]);
@@ -336,6 +340,9 @@ test("one failed render does not stop other channels and post_caption is copy au
       CONTENT_ANALYTICS_GAS_URL: "https://script.google.com/macros/s/example/exec",
       GEMINI_API_KEY: "gemini-test",
       YOUTUBE_CLIENT_SECRET: "collector-only-secret",
+      RANKING_SHORTS_BGM_YOUTUBE: youtubeBgm,
+      RANKING_SHORTS_BGM_LICENSE_CONFIRMED: "true",
+      RANKING_SHORTS_SEEDANCE: seedanceClip,
     },
   });
   assert.equal(result.youtube.status, "ok");
@@ -345,6 +352,9 @@ test("one failed render does not stop other channels and post_caption is copy au
   assert.equal(result.podcast.status, "ok");
   assert.equal(calls.filter(([command]) => command === "npm").length, 4);
   assert.equal(calls.filter(([command]) => command === "python3").length, 4);
+  const rendererCalls = calls.filter(([command]) => command === "python3");
+  assert.equal(rendererCalls[0][rendererCalls[0].indexOf("--bgm") + 1], youtubeBgm);
+  assert(rendererCalls.every((args) => args[args.indexOf("--seedance") + 1] === seedanceClip));
   assert(!calls.flat().some((value) => /publish|upload/i.test(String(value))));
   for (const channel of ["youtube", "blog", "podcast"]) {
     const actual = await readFile(path.join(outDir, channel, "candidate", "post_caption.txt"), "utf8");
@@ -355,8 +365,10 @@ test("one failed render does not stop other channels and post_caption is copy au
   const summary = JSON.parse(await readFile(path.join(outDir, "run-summary.json"), "utf8"));
   assert.equal(summary.channels.instagram.status, "failed");
   assert.equal(summary.channels.instagram.errorCategory, "render");
-  assert.deepEqual(Object.keys(summary.bgm).sort(), ["licenseConfirmed", "sha256", "source"]);
-  assert.equal(summary.bgm.source, "procedural");
+  assert.deepEqual(Object.keys(summary.bgm).sort(), ["blog", "instagram", "podcast", "youtube"]);
+  assert.equal(summary.bgm.youtube.source, "explicit");
+  assert.equal(summary.bgm.blog.source, "stable-audio-master");
+  assert.deepEqual(Object.keys(summary.seedance).sort(), ["blog", "instagram", "podcast", "youtube"]);
   await assert.rejects(lstat(path.join(outDir, "instagram")), /ENOENT/);
   const history = JSON.parse(await readFile(historyPath, "utf8"));
   assert.deepEqual(history.entries.map(({ channel }) => channel).sort(), ["blog", "podcast", "youtube"]);

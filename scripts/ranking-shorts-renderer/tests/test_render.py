@@ -24,6 +24,8 @@ from ranking_shorts.render import (
     build_script,
     materialize_asset_frames,
     render_outro_frame,
+    render_cta_frame,
+    render_hook_frame,
     render_video,
     run_ffmpeg,
     scene_frame_number,
@@ -70,7 +72,7 @@ class RenderTests(unittest.TestCase):
                 output.setnchannels(2)
                 output.setsampwidth(2)
                 output.setframerate(44100)
-                output.writeframes(b"\0" * (54 * 44100 * 2 * 2))
+                output.writeframes(b"\0" * (42 * 44100 * 2 * 2))
             self.assertEqual(validate_prebuilt_narration(valid), valid)
 
             invalid = root / "invalid.wav"
@@ -84,18 +86,18 @@ class RenderTests(unittest.TestCase):
                 output.setsampwidth(2)
                 output.setframerate(44100)
                 output.writeframes(b"\0" * (55 * 44100 * 2 * 2))
-            with self.assertRaisesRegex(RuntimeError, "prebuilt narration.*54 seconds"):
+            with self.assertRaisesRegex(RuntimeError, "prebuilt narration.*42 seconds"):
                 validate_prebuilt_narration(overlong)
 
-    def test_timeline_is_54_seconds_without_gaps(self):
+    def test_timeline_is_42_seconds_without_gaps(self):
         self.assertEqual(
             TIMELINE,
             (
-                ("hook", 0, 3),
-                ("rank3", 3, 15),
-                ("rank2", 15, 29),
-                ("rank1", 29, 46),
-                ("outro", 46, 54),
+                ("hook", 0, 4),
+                ("rank3", 4, 13),
+                ("rank2", 13, 22),
+                ("rank1", 22, 32),
+                ("outro", 32, 42),
             ),
         )
         self.assertTrue(
@@ -109,10 +111,10 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(
             script.captions,
             (
-                "2026年6月の人気コンテンツ、トップ3。",
-                "第3位。タイトル3。6月の再生回数は、3,000回でした。",
-                "第2位。タイトル2。6月の再生回数は、2,000回でした。",
-                "第1位。タイトル1。6月の再生回数は、1,000回でした。",
+                "6月、人気トップ3。",
+                "第3位。タイトル3。3,000回でした。",
+                "第2位。タイトル2。2,000回でした。",
+                "第1位。タイトル1。1,000回でした。",
                 "気になる内容は、ごうホームクリニック公式チャンネルとサイトでご覧ください。",
             ),
         )
@@ -123,10 +125,10 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(
             script.captions,
             (
-                "2026年6月のポッドキャスト、前月増加再生数トップ3。",
-                "第3位。タイトル3。前月増加再生数は、3,000回でした。",
-                "第2位。タイトル2。前月増加再生数は、2,000回でした。",
-                "第1位。タイトル1。前月増加再生数は、1,000回でした。",
+                "6月、ポッドキャストトップ3。",
+                "第3位。タイトル3。前月は、3,000回増えました。",
+                "第2位。タイトル2。前月は、2,000回増えました。",
+                "第1位。タイトル1。前月は、1,000回増えました。",
                 "気になるエピソードは、ごうホームクリニック公式チャンネルとサイトでご覧ください。",
             ),
         )
@@ -140,15 +142,14 @@ class RenderTests(unittest.TestCase):
         script = build_script(manifest)
 
         self.assertNotIn("2026-06", "\n".join(script.captions))
-        self.assertIn("2026年6月公開投稿", script.captions[1])
         self.assertIn("2026年6月のお知らせ", script.captions[3])
 
-    def test_special_transitions_follow_placement_and_never_exceed_two(self):
-        expected = {"hook": (0,), "chapter": (15, 29), "none": ()}
+    def test_special_transitions_follow_placement_and_never_exceed_four(self):
+        expected = {"hook": (0,), "chapter": (0, 4, 13, 22), "none": ()}
         for placement, starts in expected.items():
             config = RenderConfig(placement=placement)
             self.assertEqual(special_transition_starts(config), starts)
-            self.assertLessEqual(len(starts), 2)
+            self.assertLessEqual(len(starts), 4)
 
     def test_gemini_tts_uses_header_key_kore_and_environment_model(self):
         secret = "test-api-key-must-not-leak"
@@ -255,17 +256,17 @@ class RenderTests(unittest.TestCase):
             self.assertIn("fps=30", calls[0][0])
             self.assertIn("-n", calls[0][0])
             self.assertNotIn("-y", calls[0][0])
-            self.assertEqual(calls[0][0][calls[0][0].index("-t") + 1], "54")
+            self.assertEqual(calls[0][0][calls[0][0].index("-t") + 1], "42")
             self.assertEqual(
-                calls[0][0][calls[0][0].index("-frames:v") + 1], "1620"
+                calls[0][0][calls[0][0].index("-frames:v") + 1], "1260"
             )
 
     def test_rank_assets_restart_at_local_frame_zero_for_each_scene(self):
         self.assertEqual(scene_frame_number("hook", 0, 30), 0)
         self.assertEqual(scene_frame_number("hook", 89, 30), 89)
-        self.assertEqual(scene_frame_number("rank3", 90, 30), 0)
-        self.assertEqual(scene_frame_number("rank2", 450, 30), 0)
-        self.assertEqual(scene_frame_number("rank1", 870, 30), 0)
+        self.assertEqual(scene_frame_number("rank3", 120, 30), 0)
+        self.assertEqual(scene_frame_number("rank2", 390, 30), 0)
+        self.assertEqual(scene_frame_number("rank1", 660, 30), 0)
 
     def test_outro_uses_all_three_rank_assets(self):
         manifest = fake_manifest()
@@ -284,6 +285,48 @@ class RenderTests(unittest.TestCase):
 
         self.assertEqual(result.size, (720, 1280))
         self.assertEqual(seen, [("rank-1.png", 0), ("rank-2.png", 0), ("rank-3.png", 0)])
+
+    def test_outro_long_real_titles_are_clipped_to_each_card(self):
+        manifest = fake_manifest()
+        long_title = (
+            "【2026年改定】訪問看護遠隔診療補助料の届出と算定"
+            "｜訪問看護ステーション向け解説 | 名古屋市で訪問診療なら"
+            "ごうホームクリニックへ"
+        )
+        manifest.items = tuple(
+            SimpleNamespace(rank=rank, title=long_title, metric_value=rank * 1000)
+            for rank in (1, 2, 3)
+        )
+        materialized = {rank: (Path(f"rank-{rank}.png"),) for rank in (1, 2, 3)}
+
+        def fake_asset_image(paths, frame_number):
+            del paths, frame_number
+            return Image.new("RGB", (80, 80), "#355070")
+
+        for canvas in ((1080, 1920), (720, 1280)):
+            with self.subTest(canvas=canvas), patch(
+                "ranking_shorts.render._asset_image", side_effect=fake_asset_image
+            ):
+                result = render_outro_frame(
+                    manifest, materialized, RenderConfig(*canvas)
+                )
+                self.assertEqual(result.size, canvas)
+
+    def test_cta_is_a_separate_safe_area_frame(self):
+        for canvas in ((1080, 1920), (720, 1280)):
+            with self.subTest(canvas=canvas):
+                result = render_cta_frame(fake_manifest(), RenderConfig(*canvas))
+                self.assertEqual(result.size, canvas)
+                self.assertEqual(result.mode, "RGB")
+
+    def test_hook_can_use_seedance_footage_without_surrendering_local_text(self):
+        config = RenderConfig(720, 1280)
+        plain = render_hook_frame(fake_manifest(), config)
+        seedance_frame = Image.new("RGB", (720, 1280), "#e56b6f")
+        enhanced = render_hook_frame(fake_manifest(), config, seedance_frame)
+
+        self.assertNotEqual(plain.tobytes(), enhanced.tobytes())
+        self.assertEqual(enhanced.size, (720, 1280))
 
     def test_ffmpeg_errors_are_structural_and_do_not_expose_stderr(self):
         secret = "stderr-secret-must-not-leak"
@@ -353,7 +396,7 @@ class RenderTests(unittest.TestCase):
                         output_wav.setnchannels(2)
                         output_wav.setsampwidth(2)
                         output_wav.setframerate(44100)
-                        output_wav.writeframes(b"\x00\x00\x00\x00" * 44100 * 54)
+                        output_wav.writeframes(b"\x00\x00\x00\x00" * 44100 * 42)
                 else:
                     target.write_bytes(b"synthetic-mp4")
                 return subprocess.CompletedProcess(command, 0, b"", b"")

@@ -12,20 +12,27 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from .audio import synthesize_narration
-from .frames import fit_asset, render_rank_frame, render_transition_frame, semantic_lines
+from .frames import (
+    display_title,
+    fit_asset,
+    pixel_lines,
+    render_rank_frame,
+    render_transition_frame,
+)
 from .layout import load_font, safe_area
 
 
 TIMELINE = (
-    ("hook", 0, 3),
-    ("rank3", 3, 15),
-    ("rank2", 15, 29),
-    ("rank1", 29, 46),
-    ("outro", 46, 54),
+    ("hook", 0, 4),
+    ("rank3", 4, 13),
+    ("rank2", 13, 22),
+    ("rank1", 22, 32),
+    ("outro", 32, 42),
 )
+TOTAL_SECONDS = TIMELINE[-1][2]
 VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".m4v", ".webm"})
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
-MAX_ASSET_SECONDS = 54
+MAX_ASSET_SECONDS = TOTAL_SECONDS
 MAX_SAFE_TEMPO = 1.25
 ISO_MONTH = re.compile(r"(?<!\d)(\d{4})-(0[1-9]|1[0-2])(?!\d)")
 
@@ -54,24 +61,29 @@ def _naturalize_months(text):
     )
 
 
+def _spoken_title(text):
+    compact = display_title(text, 36)
+    compact = re.sub(r"^【[^】]{1,24}】", "", compact).strip()
+    return compact[:20].rstrip("、。・:： ")
+
+
 def build_script(manifest):
     ordered = tuple(sorted(manifest.items, key=lambda item: item.rank, reverse=True))
     is_podcast = manifest.channel == "podcast"
-    ranking_label = (
-        "前月増加再生数"
-        if is_podcast
-        else _naturalize_months(manifest.ranking_label)
-    )
     hook = (
-        f"{_spoken_month(manifest.month)}のポッドキャスト、前月増加再生数トップ3。"
+        f"{int(manifest.month.split('-', 1)[1])}月、ポッドキャストトップ3。"
         if is_podcast
-        else f"{_spoken_month(manifest.month)}の人気コンテンツ、トップ3。"
+        else f"{int(manifest.month.split('-', 1)[1])}月、人気トップ3。"
     )
     captions = [hook]
     captions.extend(
-        f"第{item.rank}位。{_naturalize_months(item.title)}。"
-        f"{ranking_label}は、"
-        f"{_metric_text(item.metric_value)}回でした。"
+        (
+            f"第{item.rank}位。{_naturalize_months(_spoken_title(item.title))}。"
+            f"前月は、{_metric_text(item.metric_value)}回増えました。"
+            if is_podcast
+            else f"第{item.rank}位。{_naturalize_months(_spoken_title(item.title))}。"
+            f"{_metric_text(item.metric_value)}回でした。"
+        )
         for item in ordered
     )
     captions.append(
@@ -89,7 +101,7 @@ def special_transition_starts(config):
     if config.placement == "hook":
         return (0,)
     if config.placement == "chapter":
-        return (15, 29)
+        return (0, 4, 13, 22)
     return ()
 
 
@@ -162,32 +174,15 @@ def _bgm_asset(project_dir):
     return candidates[0]
 
 
-def _caption_frame(frame, caption, config):
-    canvas = (config.width, config.height)
-    result = frame.convert("RGBA")
-    overlay = Image.new("RGBA", canvas, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    left, top, right, _ = safe_area(canvas)
-    font_size = round(38 * config.width / 1080)
-    font = load_font(font_size)
-    limit = max(1, int((right - left - 40) / max(font_size, 1)))
-    exact_caption = "\n".join(semantic_lines(caption, limit))
-    spacing = max(1, round(font_size * 0.2))
-    bounds = draw.multiline_textbbox((0, 0), exact_caption, font=font, spacing=spacing)
-    box_bottom = top + (bounds[3] - bounds[1]) + round(44 * config.height / 1920)
-    draw.rounded_rectangle(
-        (left, top, right, box_bottom),
-        radius=round(20 * config.width / 1080),
-        fill=(0, 0, 0, 190),
-    )
-    draw.multiline_text(
-        (left + round(20 * config.width / 1080), top + round(16 * config.height / 1920)),
-        exact_caption,
-        font=font,
-        fill="white",
-        spacing=spacing,
-    )
-    return Image.alpha_composite(result, overlay).convert("RGB")
+def _seedance_asset(project_dir):
+    candidates = [
+        path
+        for path in Path(project_dir).glob("seedance.*")
+        if path.suffix.lower() in VIDEO_SUFFIXES
+    ]
+    if len(candidates) > 1:
+        raise ValueError("project allows at most one Seedance motion clip")
+    return candidates[0] if candidates else None
 
 
 def _timeline_entry(seconds):
@@ -248,7 +243,16 @@ def render_outro_frame(manifest, materialized, config):
             font=rank_font,
             fill="#facc15",
         )
-        title = "\n".join(semantic_lines(items[rank].title, 16))
+        title_width = config.width - margin - round(16 * scale) - text_left
+        title = "\n".join(
+            pixel_lines(
+                draw,
+                display_title(items[rank].title, 36),
+                body_font,
+                title_width,
+                3,
+            )
+        )
         draw.multiline_text(
             (text_left, card_top + round(96 * scale)),
             title,
@@ -266,10 +270,67 @@ def render_outro_frame(manifest, materialized, config):
     return frame
 
 
+def render_hook_frame(manifest, config, seedance_frame=None):
+    canvas = (config.width, config.height)
+    frame = (
+        fit_asset(seedance_frame, canvas)
+        if seedance_frame is not None
+        else Image.new("RGB", canvas, "#111827")
+    )
+    if seedance_frame is not None:
+        shade = Image.new("RGBA", canvas, (7, 15, 29, 150))
+        frame = Image.alpha_composite(frame.convert("RGBA"), shade).convert("RGB")
+    draw = ImageDraw.Draw(frame)
+    scale = config.width / 1080
+    month = _spoken_month(manifest.month)
+    channel = {
+        "youtube": "YouTube Shorts",
+        "blog": "BLOG",
+        "instagram": "Instagram",
+        "podcast": "PODCAST",
+    }.get(manifest.channel, "MONTHLY NEWS")
+    eyebrow = load_font(round(34 * scale))
+    headline = load_font(round(82 * scale))
+    number = load_font(round(210 * scale))
+    center_x = config.width // 2
+    draw.text((center_x, round(420 * scale)), channel, font=eyebrow, fill="#94a3b8", anchor="mm")
+    draw.text((center_x, round(535 * scale)), month, font=headline, fill="white", anchor="mm")
+    draw.text((center_x, round(810 * scale)), "TOP", font=headline, fill="white", anchor="mm")
+    draw.text((center_x, round(1110 * scale)), "3", font=number, fill="#facc15", anchor="mm")
+    draw.text((center_x, round(1390 * scale)), "人気コンテンツランキング", font=eyebrow, fill="#cbd5e1", anchor="mm")
+    return frame
+
+
+def render_cta_frame(manifest, config):
+    canvas = (config.width, config.height)
+    frame = Image.new("RGB", canvas, "#111827")
+    draw = ImageDraw.Draw(frame)
+    scale = config.width / 1080
+    center_x = config.width // 2
+    eyebrow = load_font(round(34 * scale))
+    headline = load_font(round(72 * scale))
+    body = load_font(round(38 * scale))
+    noun = "エピソード" if manifest.channel == "podcast" else "内容"
+    draw.text((center_x, round(560 * scale)), "続きは概要欄から", font=headline, fill="white", anchor="mm")
+    draw.text((center_x, round(720 * scale)), f"気になる{noun}をチェック", font=body, fill="#cbd5e1", anchor="mm")
+    draw.rounded_rectangle(
+        (
+            round(150 * scale),
+            round(930 * scale),
+            config.width - round(150 * scale),
+            round(1090 * scale),
+        ),
+        radius=round(36 * scale),
+        fill="#facc15",
+    )
+    draw.text((center_x, round(1010 * scale)), "ごうホームクリニック", font=body, fill="#111827", anchor="mm")
+    draw.text((center_x, round(1280 * scale)), "gohome-clinic.com", font=eyebrow, fill="#94a3b8", anchor="mm")
+    return frame
+
+
 def render_frames(project_dir, manifest, config, directory, *, runner=subprocess.run):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    script = build_script(manifest)
     items = {item.rank: item for item in manifest.items}
     materialized = {
         rank: materialize_asset_frames(
@@ -280,48 +341,80 @@ def render_frames(project_dir, manifest, config, directory, *, runner=subprocess
         )
         for rank in (1, 2, 3)
     }
+    seedance_asset = _seedance_asset(project_dir)
+    seedance_frames = (
+        materialize_asset_frames(
+            seedance_asset,
+            directory.parent / "asset-seedance",
+            config,
+            runner=runner,
+        )
+        if seedance_asset is not None
+        else ()
+    )
     background = Image.new("RGB", (config.width, config.height), "#111827")
     starts = set(special_transition_starts(config))
     total_frames = TIMELINE[-1][2] * config.fps
 
     for frame_index in range(total_frames):
         seconds = frame_index / config.fps
-        caption_index, name = _timeline_entry(seconds)
+        _, name = _timeline_entry(seconds)
+        transition_start = next(
+            (start for start in starts if start <= seconds < start + 0.8),
+            None,
+        )
+        seedance_frame = (
+            _asset_image(seedance_frames, frame_index)
+            if seedance_frames
+            else None
+        )
+        if name == "hook":
+            hook = render_hook_frame(manifest, config, seedance_frame)
+            if transition_start is not None:
+                frame = render_transition_frame(
+                    f"{_spoken_month(manifest.month)} TOP3",
+                    hook,
+                    background,
+                    (seconds - transition_start) / 0.8,
+                    config,
+                )
+            else:
+                frame = hook
+            frame.save(directory / f"frame-{frame_index + 1:06d}.png")
+            continue
         if name == "outro":
-            frame = render_outro_frame(manifest, materialized, config)
-            frame = _caption_frame(frame, script.captions[caption_index], config)
+            frame = (
+                render_outro_frame(manifest, materialized, config)
+                if seconds < 38
+                else render_cta_frame(manifest, config)
+            )
             frame.save(directory / f"frame-{frame_index + 1:06d}.png")
             continue
 
-        rank = 3 if name in {"hook", "rank3"} else 2 if name == "rank2" else 1
+        rank = 3 if name == "rank3" else 2 if name == "rank2" else 1
         item = items[rank]
         local_frame = scene_frame_number(name, frame_index, config.fps)
         asset = _asset_image(materialized[rank], local_frame)
 
-        transition_start = next(
-            (start for start in starts if start <= seconds < start + 1),
-            None,
-        )
         if transition_start is not None:
             next_frame = fit_asset(asset, (config.width, config.height))
             frame = render_transition_frame(
-                script.captions[caption_index],
+                f"第{rank}位",
                 next_frame,
-                background,
-                seconds - transition_start,
+                seedance_frame if seedance_frame is not None else background,
+                (seconds - transition_start) / 0.8,
                 config,
             )
         else:
             frame = render_rank_frame(manifest, item, asset, seconds, config)
-        frame = _caption_frame(frame, script.captions[caption_index], config)
         frame.save(directory / f"frame-{frame_index + 1:06d}.png")
     return directory / "frame-%06d.png"
 
 
 def build_ffmpeg_command(frames, narration, bgm, output, config):
     filter_complex = (
-        "[1:a]apad,atrim=duration=54[narration];"
-        "[2:a]volume=0.18,apad,atrim=duration=54[bgm];"
+        f"[1:a]apad,atrim=duration={TOTAL_SECONDS}[narration];"
+        f"[2:a]volume=0.18,apad,atrim=duration={TOTAL_SECONDS}[bgm];"
         "[narration][bgm]amix=inputs=2:duration=longest:dropout_transition=0[mixed]"
     )
     return [
@@ -346,7 +439,7 @@ def build_ffmpeg_command(frames, narration, bgm, output, config):
         "-map",
         "[mixed]",
         "-t",
-        "54",
+        str(TOTAL_SECONDS),
         "-c:v",
         "libx264",
         "-crf",
@@ -396,7 +489,7 @@ def validate_prebuilt_narration(path):
         )
     duration = frames / rate if rate else 0
     if abs(duration - TIMELINE[-1][2]) > (1 / rate):
-        raise RuntimeError("prebuilt narration must be exactly 54 seconds")
+        raise RuntimeError(f"prebuilt narration must be exactly {TOTAL_SECONDS} seconds")
     return path
 
 
@@ -426,7 +519,7 @@ def build_aligned_narration_command(segments, durations, output):
     filters.append(
         "".join(labels)
         + f"amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,"
-        + "atrim=duration=54[mixed]"
+        + f"atrim=duration={TOTAL_SECONDS}[mixed]"
     )
     command.extend(
         (

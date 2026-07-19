@@ -48,19 +48,21 @@ npm run ranking:shorts -- \
 - PodcastはRSSで照合した `d3t3ozftmdmh3i.cloudfront.net` のアートワークだけを取得する。
 - 外部取得はHTTPS、許可済みホスト、公開IPへのDNS解決、リダイレクト各hop、Content-Type、Content-Length、実受信バイト数を検証する。画像の上限は12MB、ブログ・Instagram APIレスポンスの上限は2MBで、上限超過時はストリームを中止する。
 - 画像の取得・検証に失敗した順位は、文字を含まないブランド色PNGへ置き換える。画像失敗だけで他チャネルを停止しない。
-- BGM未指定時は、権利元が不明な素材を使わず、コードで決定的に生成した54秒のWAVを使う。
+- 4媒体にはfal Stable Audioで生成した42秒の固定マスターを1曲ずつ割り当てる。同じ媒体では毎月同じBGMを使い、媒体識別を助ける。
+- 媒体マスターが未配置の場合だけ、コードで決定的に生成した42秒のWAVへ安全にフォールバックする。
 - 手元のBGMを使う場合は、利用許諾を人が確認したファイルのみ指定する。
 
 ```bash
-RANKING_SHORTS_BGM=/absolute/path/to/licensed-bgm.wav \
+RANKING_SHORTS_BGM_YOUTUBE=/absolute/path/to/youtube-master.m4a \
 RANKING_SHORTS_BGM_LICENSE_CONFIRMED=true \
+RANKING_SHORTS_SEEDANCE=/absolute/path/to/ranking-motion.mp4 \
 npm run ranking:shorts -- \
   --month 2026-06 \
   --channel youtube \
   --out output/monthly-ranking/2026-06-youtube
 ```
 
-シンボリックリンク、未対応形式、またはライセンス確認フラグのない明示BGMは拒否されます。`run-summary.json` にはBGMのsource、SHA-256、ライセンス確認状態が記録されます。
+媒体別BGMは `RANKING_SHORTS_BGM_YOUTUBE`、`RANKING_SHORTS_BGM_INSTAGRAM`、`RANKING_SHORTS_BGM_BLOG`、`RANKING_SHORTS_BGM_PODCAST` で指定します。共通の `RANKING_SHORTS_BGM` は後方互換の予備です。Seedanceも末尾を媒体名にした変数で個別指定でき、共通の `RANKING_SHORTS_SEEDANCE` を全媒体へ適用できます。シンボリックリンク、未対応形式、またはライセンス確認フラグのない明示BGMは拒否されます。`run-summary.json` には媒体別BGMとSeedanceのsource、SHA-256、ライセンス確認状態が記録されます。
 
 ## 原子的な成果物と確認
 
@@ -83,7 +85,7 @@ npm run ranking:shorts -- \
 
 公開前に、少なくとも以下を人が確認します。
 
-1. `run-summary.json` で対象チャネルの成否、サニタイズ済み失敗カテゴリ、BGM source・hash・licenseを確認する。
+1. `run-summary.json` で対象チャネルの成否、サニタイズ済み失敗カテゴリ、媒体別BGMとSeedanceのsource・hash・licenseを確認する。
 2. `ranking.json` と動画内の順位、タイトル、数値、字幕が一致することを確認する。
 3. Podcastは「前月中に増えたYouTube再生回数」のTOP3であり、正規タイトル、Spotify URL、RSSアートワークが対応していることを確認する。
 4. MP4を通しで視聴し、音声、発音、画面切れ、画像、トランジションを確認する。

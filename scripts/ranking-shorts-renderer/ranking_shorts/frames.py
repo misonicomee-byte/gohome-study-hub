@@ -1,3 +1,4 @@
+import re
 import unicodedata
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -6,6 +7,7 @@ from .layout import load_font, safe_area
 from .motions import motion_state
 
 MAX_TRANSITION_CODEPOINTS = 512
+DISPLAY_TITLE_CODEPOINTS = 28
 
 
 def fit_asset(image, canvas):
@@ -44,6 +46,55 @@ def semantic_lines(text, limit):
     if "".join(result) != text:
         raise AssertionError("line wrapping must preserve the exact text")
     return result
+
+
+def display_title(text, max_codepoints=DISPLAY_TITLE_CODEPOINTS):
+    """Return a compact on-screen title while preserving source copy elsewhere."""
+    normalized = " ".join(str(text).split()).strip()
+    if not normalized:
+        return normalized
+    sections = [section.strip() for section in normalized.replace(" | ", "｜").split("｜")]
+    compact = next((section for section in sections if section), normalized)
+    if len(compact) > max_codepoints:
+        compact = compact[:max_codepoints].rstrip("、。・:： ") + "…"
+    return compact
+
+
+def pixel_lines(draw, text, font, max_width, max_lines):
+    """Wrap using the actual font metrics and ellipsize at a hard line count."""
+    if max_width <= 0 or max_lines < 1:
+        raise ValueError("pixel width and line-count limits must be positive")
+    clusters = list(_grapheme_clusters(" ".join(str(text).split())))
+    if not clusters:
+        return []
+
+    lines = []
+    cursor = 0
+    while cursor < len(clusters) and len(lines) < max_lines:
+        start = cursor
+        end = cursor
+        last_break = None
+        while end < len(clusters):
+            candidate = "".join(clusters[start : end + 1])
+            if draw.textlength(candidate, font=font) > max_width:
+                break
+            if clusters[end] in "、。！？・ ":
+                last_break = end + 1
+            end += 1
+        if end == start:
+            end = start + 1
+        elif end < len(clusters) and last_break and last_break > start:
+            end = last_break
+        lines.append("".join(clusters[start:end]).strip())
+        cursor = end
+
+    if cursor < len(clusters):
+        ellipsis = "…"
+        final = list(_grapheme_clusters(lines[-1]))
+        while final and draw.textlength("".join(final) + ellipsis, font=font) > max_width:
+            final.pop()
+        lines[-1] = "".join(final).rstrip("、。！？・ ") + ellipsis
+    return lines
 
 
 def _scaled(value, canvas):
@@ -111,12 +162,26 @@ def _metric_text(value):
     return f"{float(value):,.2f}".rstrip("0").rstrip(".")
 
 
+def _display_metric_label(text):
+    compact = " ".join(str(text).split())
+    compact = re.sub(
+        r"(?<!\d)\d{4}-(0[1-9]|1[0-2])(?!\d)",
+        lambda match: f"{int(match.group(1))}月",
+        compact,
+    )
+    compact = compact.replace("ページビュー", "PV").replace("page views", "PV")
+    compact = compact.replace("views", "閲覧数")
+    if len(compact) > 24:
+        compact = compact[:23].rstrip("、。・:： ") + "…"
+    return compact
+
+
 def render_rank_frame(manifest, item, asset, time, config):
     del time
     canvas = (config.width, config.height)
     frame = fit_asset(asset, canvas).convert("RGBA")
     left, _, right, bottom = safe_area(canvas)
-    panel_top = _scaled(1010, canvas)
+    panel_top = _scaled(1180, canvas)
 
     overlay = Image.new("RGBA", canvas, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
@@ -149,11 +214,11 @@ def render_rank_frame(manifest, item, asset, time, config):
     text_left = badge_left + badge_size + _scaled(26, canvas)
     text_right = right - _scaled(28, canvas)
     title_top = badge_top
-    title_height = _scaled(286, canvas)
+    title_height = _scaled(190, canvas)
     if item.title:
         rendered_title, title_font, spacing = _multiline(
             draw,
-            item.title,
+            display_title(item.title),
             text_right - text_left,
             title_height,
             canvas,
@@ -168,15 +233,15 @@ def render_rank_frame(manifest, item, asset, time, config):
             spacing=spacing,
         )
 
-    label_y = panel_top + _scaled(382, canvas)
+    label_y = bottom - _scaled(94, canvas)
     if manifest.ranking_label:
         label_left = left + _scaled(34, canvas)
         label_right = right - _scaled(34, canvas)
         rendered_label, label_font, label_spacing = _multiline(
             draw,
-            manifest.ranking_label,
+            _display_metric_label(manifest.ranking_label),
             label_right - label_left,
-            _scaled(150, canvas),
+            _scaled(90, canvas),
             canvas,
             36,
             22,
