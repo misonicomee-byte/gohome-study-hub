@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { collectBlogRanking } from "../scripts/monthly-ranking-data/blog.mjs";
+import { collectInstagramRanking } from "../scripts/monthly-ranking-data/instagram.mjs";
 import { collectYouTubeRanking } from "../scripts/monthly-ranking-data/youtube.mjs";
 
 const period = {
@@ -336,5 +338,248 @@ test("YouTube reports API status without exposing the access token", async () =>
   await assert.rejects(
     collectYouTubeRanking({ accessToken, channelId: "UCtest", period, fetchImpl }),
     (error) => error.message.includes("status=429") && !error.message.includes(accessToken),
+  );
+});
+
+function blogPost(id, pageViews, totalUsers, date = "2026-06-01") {
+  return {
+    url: `https://gohome-clinic.com/${date.replaceAll("-", "/")}/${id}/`,
+    title: `blog ${id}`,
+    date,
+    pageViews,
+    totalUsers,
+  };
+}
+
+test("blog requests exact month boundaries and sorts all tie breakers deterministically", async () => {
+  let requested;
+  const fetchImpl = async (url) => {
+    requested = new URL(url);
+    return jsonResponse({
+      period: { startDate: "2026-06-01", endDate: "2026-06-30" },
+      data: [
+        blogPost("old", 10, 5, "2026-05-01"),
+        blogPost("a", 10, 5, "2026-06-20"),
+        blogPost("z", 10, 5, "2026-06-20"),
+        blogPost("users", 10, 6, "2026-01-01"),
+      ],
+    });
+  };
+
+  const result = await collectBlogRanking({
+    gasUrl: "https://example.test/exec?ignored=yes",
+    period,
+    fetchImpl,
+  });
+
+  assert.deepEqual(Object.fromEntries(requested.searchParams), {
+    api: "blog-ranking",
+    startDate: "2026-06-01",
+    endDate: "2026-06-30",
+    limit: "100",
+  });
+  assert.deepEqual(result.items.map((item) => item.contentId), [
+    blogPost("users", 0, 0, "2026-01-01").url,
+    blogPost("z", 0, 0, "2026-06-20").url,
+    blogPost("a", 0, 0, "2026-06-20").url,
+  ]);
+  assert.equal(result.rankingMetric, "screenPageViews");
+  assert.equal(result.items.length, 3);
+});
+
+test("blog requires an exact response period and three valid unique items", async (t) => {
+  const valid = {
+    period: { startDate: period.startDate, endDate: period.endDate },
+    data: [blogPost("a", 3, 1), blogPost("b", 2, 1), blogPost("c", 1, 1)],
+  };
+  const invalidBodies = [
+    null,
+    {},
+    { ...valid, period: { startDate: "2026-06-02", endDate: period.endDate } },
+    { ...valid, period: { ...valid.period, month: "2026-05" } },
+    { ...valid, period: { ...valid.period, timezone: "UTC" } },
+    { ...valid, data: valid.data.slice(0, 2) },
+    { ...valid, data: [valid.data[0], valid.data[0], valid.data[2]] },
+    { ...valid, data: [{ ...valid.data[0], pageViews: "3" }, ...valid.data.slice(1)] },
+    { ...valid, data: [{ ...valid.data[0], date: "2026-02-30" }, ...valid.data.slice(1)] },
+    { ...valid, data: [{ ...valid.data[0], url: "javascript:alert(1)" }, ...valid.data.slice(1)] },
+  ];
+
+  for (const [index, body] of invalidBodies.entries()) {
+    await t.test(`invalid payload ${index + 1}`, async () => {
+      await assert.rejects(
+        collectBlogRanking({ gasUrl: "https://example.test/exec", period, fetchImpl: async () => jsonResponse(body) }),
+        /(payload|period|fewer|duplicate|metric|date|url)/i,
+      );
+    });
+  }
+});
+
+function instagramPost(id, {
+  timestamp = "2026-06-10T00:00:00Z",
+  viewsDelta = 10,
+  totalInteractionsDelta = 2,
+  views = 100,
+  totalInteractions = 20,
+} = {}) {
+  return {
+    id,
+    caption: `caption ${id}\nmore`,
+    permalink: `https://www.instagram.com/p/${id}/`,
+    timestamp,
+    viewsDelta,
+    totalInteractionsDelta,
+    views,
+    total_interactions: totalInteractions,
+  };
+}
+
+const exactInstagramPeriod = {
+  ...period,
+  boundarySnapshotDate: "2026-07-01",
+};
+
+test("Instagram exact mode validates the month and sorts by delta, instant, then id", async () => {
+  let requested;
+  const fetchImpl = async (url) => {
+    requested = new URL(url);
+    return jsonResponse({
+      period: exactInstagramPeriod,
+      partial: false,
+      data: [
+        instagramPost("a", { timestamp: "2026-06-20T09:00:00+09:00" }),
+        instagramPost("z", { timestamp: "2026-06-20T00:00:00Z" }),
+        instagramPost("winner", { viewsDelta: 11, timestamp: "2026-01-01T00:00:00Z" }),
+      ],
+    });
+  };
+
+  const result = await collectInstagramRanking({ gasUrl: "https://example.test/exec", period, fetchImpl });
+
+  assert.deepEqual(Object.fromEntries(requested.searchParams), {
+    api: "instagram-monthly-ranking",
+    month: "2026-06",
+    limit: "3",
+  });
+  assert.deepEqual(result.items.map((item) => item.contentId), ["winner", "z", "a"]);
+  assert.equal(result.rankingMetric, "viewsDelta");
+  assert.equal(result.rankingMode, "exactMonthlyDelta");
+  assert.match(result.rankingLabel, /views.*増加/i);
+});
+
+test("Instagram explicit partial response uses the initial published-month current-views fallback", async () => {
+  const requests = [];
+  const fetchImpl = async (url) => {
+    const parsed = new URL(url);
+    requests.push(parsed);
+    if (parsed.searchParams.get("api") === "instagram-monthly-ranking") {
+      return jsonResponse({ partial: true, data: [] });
+    }
+    return jsonResponse({ data: [
+      instagramPost("before", { timestamp: "2026-05-31T14:59:59Z", views: 999 }),
+      instagramPost("a", { timestamp: "2026-06-20T09:00:00+09:00", views: 100, totalInteractions: 20 }),
+      instagramPost("z", { timestamp: "2026-06-20T00:00:00Z", views: 100, totalInteractions: 20 }),
+      instagramPost("winner", { timestamp: "2026-06-01T00:00:00+09:00", views: 101 }),
+      instagramPost("after", { timestamp: "2026-06-30T15:00:00Z", views: 999 }),
+    ] });
+  };
+
+  const result = await collectInstagramRanking({ gasUrl: "https://example.test/exec", period, fetchImpl });
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(Object.fromEntries(requests[1].searchParams), { api: "instagram-posts", limit: "100" });
+  assert.deepEqual(result.items.map((item) => item.contentId), ["winner", "z", "a"]);
+  assert.equal(result.rankingMetric, "currentViewsOfPostsPublishedInMonth");
+  assert.equal(result.rankingMode, "initialPublishedMonthCurrentViews");
+  assert.match(result.rankingLabel, /現在views/i);
+  assert.match(result.rankingLabel, /初回限定/);
+  assert.match(result.rankingLabel, /増加数ではありません/);
+});
+
+test("Instagram falls back only for known unavailable boundary errors", async (t) => {
+  const knownMessages = [
+    "Instagram snapshot store is not configured",
+    "Instagram snapshot sheet schema is missing",
+    "instagram_daily snapshot sheet is missing",
+    "Complete month boundary snapshots are required",
+  ];
+  for (const message of knownMessages) {
+    await t.test(message, async () => {
+      let requests = 0;
+      const fetchImpl = async () => {
+        requests += 1;
+        return requests === 1
+          ? jsonResponse({ error: message })
+          : jsonResponse({ data: [instagramPost("a"), instagramPost("b"), instagramPost("c")] });
+      };
+      const result = await collectInstagramRanking({ gasUrl: "https://example.test/exec", period, fetchImpl });
+      assert.equal(result.rankingMode, "initialPublishedMonthCurrentViews");
+      assert.equal(requests, 2);
+    });
+  }
+
+  for (const failure of [
+    { response: jsonResponse({ error: "Meta API authentication failed" }), expected: /authentication/i },
+    { response: jsonResponse({}, { ok: false, status: 503 }), expected: /status=503/i },
+  ]) {
+    await t.test(String(failure.expected), async () => {
+      let requests = 0;
+      await assert.rejects(
+        collectInstagramRanking({
+          gasUrl: "https://example.test/exec",
+          period,
+          fetchImpl: async () => { requests += 1; return failure.response; },
+        }),
+        failure.expected,
+      );
+      assert.equal(requests, 1);
+    });
+  }
+});
+
+test("Instagram exact mode fails closed on partial markers, periods, fields, and IDs", async (t) => {
+  const valid = {
+    period: exactInstagramPeriod,
+    partial: false,
+    data: [instagramPost("a"), instagramPost("b"), instagramPost("c")],
+  };
+  const invalidBodies = [
+    { ...valid, partial: undefined },
+    { ...valid, partial: "false" },
+    { ...valid, period: { ...exactInstagramPeriod, month: "2026-05" } },
+    { ...valid, data: valid.data.slice(0, 2) },
+    { ...valid, data: [valid.data[0], valid.data[0], valid.data[2]] },
+    { ...valid, data: [{ ...valid.data[0], viewsDelta: "10" }, ...valid.data.slice(1)] },
+    { ...valid, data: [{ ...valid.data[0], timestamp: "2026-02-30T00:00:00Z" }, ...valid.data.slice(1)] },
+    { ...valid, data: [{ ...valid.data[0], permalink: "file:///tmp/post" }, ...valid.data.slice(1)] },
+  ];
+  for (const [index, body] of invalidBodies.entries()) {
+    await t.test(`invalid exact payload ${index + 1}`, async () => {
+      await assert.rejects(
+        collectInstagramRanking({ gasUrl: "https://example.test/exec", period, fetchImpl: async () => jsonResponse(body) }),
+        /(partial|period|fewer|duplicate|metric|timestamp|url)/i,
+      );
+    });
+  }
+});
+
+test("Instagram fallback fails closed when fewer than three valid in-month posts exist", async () => {
+  let requests = 0;
+  await assert.rejects(
+    collectInstagramRanking({
+      gasUrl: "https://example.test/exec",
+      period,
+      fetchImpl: async () => {
+        requests += 1;
+        return requests === 1
+          ? jsonResponse({ error: "Complete month boundary snapshots are required" })
+          : jsonResponse({ data: [
+            instagramPost("in-one"),
+            instagramPost("in-two"),
+            instagramPost("outside", { timestamp: "2026-07-01T00:00:00+09:00" }),
+          ] });
+      },
+    }),
+    /fewer than 3.*published/i,
   );
 });
