@@ -66,13 +66,13 @@ function handleApiRequest_(params) {
   try {
     switch (params.api) {
       case "instagram-posts": {
-        const limit = parseInt(params.limit, 10) || 30;
+        const limit = parseApiLimit_(params.limit, 30, 100);
         result = getInstagramPostsWithInsights(limit);
         break;
       }
       case "instagram-summary": {
         // 簡易サマリー：投稿数、平均like、平均reach
-        const limit = parseInt(params.limit, 10) || 30;
+        const limit = parseApiLimit_(params.limit, 30, 100);
         const posts = getInstagramPostsWithInsights(limit);
         if (posts.error) {
           result = posts;
@@ -100,9 +100,13 @@ function handleApiRequest_(params) {
       case "blog-ranking": {
         // gohome-clinic.com 本院サイトの blog 記事一覧（PV/UU・公開日付き）
         // 戻り値: [{ url, title, pageViews, totalUsers, date }]
-        const days = parseInt(params.days, 10) || 90;
-        const limit = parseInt(params.limit, 10) || 30;
-        result = getBlogRankingFromGA4_(days, limit);
+        const startDate = String(params.startDate || "");
+        const endDate = String(params.endDate || "");
+        const limit = parseApiLimit_(params.limit, 100, 100);
+        if (!isValidIsoDate_(startDate) || !isValidIsoDate_(endDate) || startDate > endDate) {
+          throw new Error("blog-ranking requires valid startDate and endDate");
+        }
+        result = getBlogRankingFromGA4_(startDate, endDate, limit);
         break;
       }
       default:
@@ -113,6 +117,35 @@ function handleApiRequest_(params) {
   }
   return ContentService.createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function parseApiLimit_(value, defaultLimit, maxLimit) {
+  var raw = value === undefined || value === null || value === ""
+    ? String(defaultLimit)
+    : String(value);
+  if (!/^\d+$/.test(raw)) {
+    throw new Error("limit must be a positive integer up to " + maxLimit);
+  }
+  var limit = Number(raw);
+  if (limit < 1 || limit > maxLimit) {
+    throw new Error("limit must be a positive integer up to " + maxLimit);
+  }
+  return limit;
+}
+
+function isValidIsoDate_(value) {
+  var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+
+  var year = Number(match[1]);
+  var month = Number(match[2]);
+  var day = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+
+  var daysByMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  var isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  if (isLeapYear) daysByMonth[1] = 29;
+  return day <= daysByMonth[month - 1];
 }
 
 function include(filename) {
@@ -303,19 +336,17 @@ function getInstagramPosts(limit) {
 
 function getPostInsights(mediaId) {
   const data = callInstagramApi(
-    `${mediaId}/insights?metric=reach,saved,shares,total_interactions`
+    `${mediaId}/insights?metric=views,reach,saved,shares,total_interactions`
   );
 
-  if (data.error) return { reach: 0, saved: 0, shares: 0, total_interactions: 0 };
+  if (data.error) return { views: 0, reach: 0, saved: 0, shares: 0, total_interactions: 0 };
 
-  const result = { reach: 0, saved: 0, shares: 0, total_interactions: 0 };
-  if (data.data) {
-    data.data.forEach(function (metric) {
-      if (metric.values && metric.values.length > 0) {
-        result[metric.name] = metric.values[0].value;
-      }
-    });
-  }
+  const result = { views: 0, reach: 0, saved: 0, shares: 0, total_interactions: 0 };
+  (data.data || []).forEach(function (metric) {
+    if (metric.values && metric.values.length) {
+      result[metric.name] = Number(metric.values[0].value || 0);
+    }
+  });
   return result;
 }
 
@@ -335,6 +366,7 @@ function getInstagramPostsWithInsights(limit) {
       timestamp: post.timestamp,
       like_count: post.like_count || 0,
       comments_count: post.comments_count || 0,
+      views: insights.views,
       reach: insights.reach,
       total_interactions: insights.total_interactions,
       saved: insights.saved,
@@ -606,15 +638,8 @@ function getPodcastList_() {
  * pagePath が /YYYY/MM/DD/ で始まる記事のみを対象とし、PV/UU・公開日付き配列を返す。
  * 公開日は URL の日付プレフィックスから抽出。
  */
-function getBlogRankingFromGA4_(days, limit) {
-  days = days || 90;
+function getBlogRankingFromGA4_(startDate, endDate, limit) {
   limit = limit || 30;
-
-  var now = new Date();
-  var endDate = Utilities.formatDate(now, "Asia/Tokyo", "yyyy-MM-dd");
-  var startObj = new Date(now);
-  startObj.setDate(startObj.getDate() - days);
-  var startDate = Utilities.formatDate(startObj, "Asia/Tokyo", "yyyy-MM-dd");
 
   try {
     var report = AnalyticsData.Properties.runReport(
@@ -681,7 +706,7 @@ function getBlogRankingFromGA4_(days, limit) {
     return {
       data: rows.slice(0, limit),
       count: rows.length,
-      period: { startDate: startDate, endDate: endDate, days: days },
+      period: { startDate: startDate, endDate: endDate },
     };
   } catch (e) {
     console.error("Blog Ranking GA4 Error:", e);
