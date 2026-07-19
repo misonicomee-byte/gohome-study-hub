@@ -67,19 +67,30 @@ def _timestamp(value: Any) -> str:
 
 def _url(value: Any) -> str:
     value = _string(value, "item url")
+    if any(character.isspace() for character in value):
+        raise ValueError("item url must be a valid HTTP(S) URL")
     try:
         parsed = urlsplit(value)
+        _ = parsed.port
     except ValueError:
-        raise ValueError("item url must be a valid URL") from None
-    if not parsed.scheme or not (parsed.netloc or parsed.path):
-        raise ValueError("item url must be a valid URL")
+        raise ValueError("item url must be a valid HTTP(S) URL") from None
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or not parsed.hostname
+    ):
+        raise ValueError("item url must be a valid HTTP(S) URL")
     return value
 
 
 def _metric(value: Any, name: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite number")
-    if not math.isfinite(value):
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite:
         raise ValueError(f"{name} must be a finite number")
     return value
 

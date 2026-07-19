@@ -123,6 +123,34 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.load(raw)
 
+    def test_manifest_rejects_urls_outside_strict_http_schema(self):
+        invalid_urls = (
+            "https://exa mple.com/path",
+            "https://example.test:bad/path",
+            "https://example.test:65536/path",
+            "https:///missing-host",
+            "ftp://example.test/path",
+        )
+        for url in invalid_urls:
+            with self.subTest(url=url):
+                raw = valid_manifest()
+                raw["items"][0]["url"] = url
+                with self.assertRaisesRegex(ValueError, "valid HTTP.*URL"):
+                    self.load(raw)
+
+    def test_manifest_accepts_http_port_zero_like_the_javascript_schema(self):
+        raw = valid_manifest()
+        raw["items"][0]["url"] = "https://example.test:0/path"
+
+        self.assertEqual(self.load(raw).items[0].url, "https://example.test:0/path")
+
+    def test_manifest_rejects_huge_integer_metrics_as_validation_errors(self):
+        raw = valid_manifest()
+        raw["items"][0]["metricValue"] = 10**400
+
+        with self.assertRaisesRegex(ValueError, "finite number"):
+            self.load(raw)
+
     def test_manifest_rejects_non_object_or_invalid_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "ranking.json"
