@@ -22,13 +22,17 @@ python3 scripts/ranking-shorts-renderer/main.py \
 
 `--placement` は `hook`、`chapter`、`none` のいずれかです。Seedance の演出素材を作る場合も、既存の `fal-seedance` ワークフローで生成し、この renderer には順位別の完成素材だけを渡します。生成映像の中に AI で日本語文字を描かせず、日本語字幕は renderer の編集可能なテキストから重ねます。
 
+renderer 本体は、ランキング schema・テスト・月次処理と同じ変更履歴で再現性を保つため、versioned `gohome-study-hub` リポジトリに置きます。`fal-seedance` は素材生成を担当し、完成したローカル素材だけをこの renderer の入力にする境界です。
+
+Gemini TTS は字幕行ごとに生成し、各行を固定タイムライン区間へ配置します。区間よりわずかに長い音声だけ安全範囲で速度調整し、短い音声は無音で埋めます。`--narration` は、あらかじめ54秒へ整えた完成音声トラックをそのまま使うための入力です。
+
 ## BGM の境界
 
 BGM は利用元、曲名、作者、取得日、ライセンス、商用・SNS 利用条件を案件台帳に記録し、証跡を保管してください。権利条件が確認できない音源は入力に使いません。procedural BGM generation is outside this workflow.
 
 ## QA と成果物
 
-CLI は ffprobe で H.264/AAC、1 映像・1 音声、30fps、指定解像度、53.5〜54.5 秒を検査します。その後、全編 decode、blackdetect、2 秒間隔 contact sheet、MP4 の SHA-256 を検証・記録します。いずれかが失敗した場合、候補 MP4 は作られず draft が調査用に残ります。
+CLI は ffprobe で H.264/AAC、1 映像・1 音声、30fps、指定解像度、53.5〜54.5 秒を検査します。その後、エラー即時終了の全編 decode、blackdetect、2 秒間隔で期待27枚（許容0枚）の contact sheet、MP4 の SHA-256 を検証・記録します。いずれかが失敗した場合、候補 MP4 は作られず実行固有の `draft/` サブフォルダが調査用に残ります。
 
 合格した媒体フォルダには MP4、QA JSON、contact sheet に加えて次を同梱します。
 

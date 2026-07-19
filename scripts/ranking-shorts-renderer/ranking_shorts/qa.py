@@ -19,6 +19,10 @@ class QaError(RuntimeError):
     """Raised when a rendered candidate fails a non-negotiable QA gate."""
 
 
+CONTACT_SHEET_EXPECTED_FRAMES = 27
+CONTACT_SHEET_FRAME_TOLERANCE = 0
+
+
 @dataclass(frozen=True, slots=True)
 class QaResult:
     report_path: Path
@@ -120,7 +124,21 @@ def run_qa(video, config, report_path, sheet_path, *, runner=subprocess.run):
     video_stream, audio_stream, duration = _validate_probe(probe, config)
 
     _run(
-        ["ffmpeg", "-v", "error", "-i", str(video), "-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"],
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            str(video),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0",
+            "-f",
+            "null",
+            "-",
+        ],
         runner,
         "full decode",
     )
@@ -142,7 +160,14 @@ def run_qa(video, config, report_path, sheet_path, *, runner=subprocess.run):
             runner,
             "contact sheet extraction",
         )
-        _contact_sheet(tuple(sorted(pattern.parent.glob("frame-*.jpg"))), sheet_path)
+        frames = tuple(sorted(pattern.parent.glob("frame-*.jpg")))
+        minimum = CONTACT_SHEET_EXPECTED_FRAMES - CONTACT_SHEET_FRAME_TOLERANCE
+        maximum = CONTACT_SHEET_EXPECTED_FRAMES + CONTACT_SHEET_FRAME_TOLERANCE
+        if not minimum <= len(frames) <= maximum:
+            raise QaError(
+                f"contact sheet must contain {CONTACT_SHEET_EXPECTED_FRAMES} frames"
+            )
+        _contact_sheet(frames, sheet_path)
 
     digest = hashlib.sha256(video.read_bytes()).hexdigest()
     report = {

@@ -8,6 +8,7 @@ import unittest
 import wave
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -22,8 +23,10 @@ from ranking_shorts.render import (
     build_ffmpeg_command,
     build_script,
     materialize_asset_frames,
+    render_outro_frame,
     render_video,
     run_ffmpeg,
+    scene_frame_number,
     special_transition_starts,
 )
 
@@ -77,13 +80,24 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(
             script.captions,
             (
-                "2026-06の人気コンテンツ、トップ3。",
+                "2026年6月の人気コンテンツ、トップ3。",
                 "第3位。タイトル3。6月の再生回数は、3,000回でした。",
                 "第2位。タイトル2。6月の再生回数は、2,000回でした。",
                 "第1位。タイトル1。6月の再生回数は、1,000回でした。",
                 "気になる内容は、ごうホームクリニック公式チャンネルとサイトでご覧ください。",
             ),
         )
+
+    def test_script_naturalizes_iso_months_everywhere_tts_reads(self):
+        manifest = fake_manifest()
+        manifest.ranking_label = "2026-06公開投稿の現在views"
+        manifest.items[0].title = "2026-06のお知らせ"
+
+        script = build_script(manifest)
+
+        self.assertNotIn("2026-06", "\n".join(script.captions))
+        self.assertIn("2026年6月公開投稿", script.captions[1])
+        self.assertIn("2026年6月のお知らせ", script.captions[3])
 
     def test_special_transitions_follow_placement_and_never_exceed_two(self):
         expected = {"hook": (0,), "chapter": (15, 29), "none": ()}
@@ -195,6 +209,37 @@ class RenderTests(unittest.TestCase):
             self.assertEqual(len(frames), 1)
             self.assertEqual(frames[0].name, "frame-000001.png")
             self.assertIn("fps=30", calls[0][0])
+            self.assertIn("-n", calls[0][0])
+            self.assertNotIn("-y", calls[0][0])
+            self.assertEqual(calls[0][0][calls[0][0].index("-t") + 1], "54")
+            self.assertEqual(
+                calls[0][0][calls[0][0].index("-frames:v") + 1], "1620"
+            )
+
+    def test_rank_assets_restart_at_local_frame_zero_for_each_scene(self):
+        self.assertEqual(scene_frame_number("hook", 0, 30), 0)
+        self.assertEqual(scene_frame_number("hook", 89, 30), 89)
+        self.assertEqual(scene_frame_number("rank3", 90, 30), 0)
+        self.assertEqual(scene_frame_number("rank2", 450, 30), 0)
+        self.assertEqual(scene_frame_number("rank1", 870, 30), 0)
+
+    def test_outro_uses_all_three_rank_assets(self):
+        manifest = fake_manifest()
+        materialized = {
+            rank: (Path(f"rank-{rank}.png"),) for rank in (1, 2, 3)
+        }
+        seen = []
+
+        def fake_asset_image(paths, frame_number):
+            seen.append((paths[0].name, frame_number))
+            rank = int(paths[0].stem[-1])
+            return Image.new("RGB", (80, 80), (rank * 60, 20, 20))
+
+        with patch("ranking_shorts.render._asset_image", side_effect=fake_asset_image):
+            result = render_outro_frame(manifest, materialized, RenderConfig(720, 1280))
+
+        self.assertEqual(result.size, (720, 1280))
+        self.assertEqual(seen, [("rank-1.png", 0), ("rank-2.png", 0), ("rank-3.png", 0)])
 
     def test_ffmpeg_errors_are_structural_and_do_not_expose_stderr(self):
         secret = "stderr-secret-must-not-leak"
@@ -221,6 +266,8 @@ class RenderTests(unittest.TestCase):
         self.assertIn("volume=0.18", " ".join(command))
         self.assertEqual(command.count("libx264"), 1)
         self.assertEqual(command.count("aac"), 1)
+        self.assertIn("-n", command)
+        self.assertNotIn("-y", command)
 
     def test_render_video_supports_injected_synthetic_audio_without_network(self):
         secret = "render-api-key-must-not-leak"
@@ -239,10 +286,15 @@ class RenderTests(unittest.TestCase):
             output = root / "draft.mp4"
             received = {}
 
+            tts_calls = []
+
             def fake_tts(text, api_key, narration, **kwargs):
-                received["text"] = text
-                received["api_key"] = api_key
-                narration.write_bytes(b"synthetic-wav")
+                tts_calls.append((text, api_key))
+                with wave.open(str(narration), "wb") as target:
+                    target.setnchannels(2)
+                    target.setsampwidth(2)
+                    target.setframerate(44100)
+                    target.writeframes(b"\x00\x00\x00\x00" * 4410)
 
             def fake_frames(project, manifest, config, directory, **kwargs):
                 del project, manifest, config, kwargs
@@ -250,8 +302,16 @@ class RenderTests(unittest.TestCase):
 
             def fake_runner(command, **kwargs):
                 del kwargs
-                received["command"] = command
-                Path(command[-1]).write_bytes(b"synthetic-mp4")
+                received.setdefault("commands", []).append(command)
+                target = Path(command[-1])
+                if target.suffix == ".wav":
+                    with wave.open(str(target), "wb") as output_wav:
+                        output_wav.setnchannels(2)
+                        output_wav.setsampwidth(2)
+                        output_wav.setframerate(44100)
+                        output_wav.writeframes(b"\x00\x00\x00\x00" * 44100 * 54)
+                else:
+                    target.write_bytes(b"synthetic-mp4")
                 return subprocess.CompletedProcess(command, 0, b"", b"")
 
             result = render_video(
@@ -267,9 +327,14 @@ class RenderTests(unittest.TestCase):
 
             self.assertEqual(result, output)
             self.assertTrue(output.exists())
-            self.assertEqual(received["api_key"], secret)
-            self.assertEqual(received["text"], "\n".join(build_script(fake_manifest()).captions))
-            self.assertNotIn(secret, " ".join(map(str, received["command"])))
+            self.assertEqual(
+                [text for text, _ in tts_calls], list(build_script(fake_manifest()).captions)
+            )
+            self.assertEqual([key for _, key in tts_calls], [secret] * len(TIMELINE))
+            self.assertNotIn(
+                secret,
+                " ".join(str(part) for command in received["commands"] for part in command),
+            )
 
 
 if __name__ == "__main__":

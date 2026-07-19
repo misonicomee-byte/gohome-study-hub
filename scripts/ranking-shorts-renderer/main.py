@@ -9,7 +9,9 @@ import os
 import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 
 from ranking_shorts.model import MOTIONS, PLACEMENTS, RankingManifest, RenderConfig
@@ -35,6 +37,8 @@ class Context:
     draft_sheet: Path
     post_caption: Path
     captions_json: Path
+    draft_parent: Path
+    lock: Path
     api_key: str
     narration: Path | None
 
@@ -74,6 +78,33 @@ def _absent(path):
         raise ValueError(f"output already exists: {Path(path).name}")
 
 
+@contextmanager
+def exclusive_reservation(lock):
+    lock = Path(lock)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise ValueError("render is already running for this output") from None
+    except OSError:
+        raise RuntimeError("could not reserve output") from None
+    try:
+        yield
+    finally:
+        os.close(descriptor)
+        lock.unlink(missing_ok=True)
+
+
+def _candidate_targets(context):
+    return (
+        context.output,
+        context.report,
+        context.sheet,
+        context.post_caption,
+        context.captions_json,
+    )
+
+
 def preflight(args, environ=os.environ, which=shutil.which):
     manifest_path = args.manifest.expanduser().resolve()
     if not manifest_path.is_file():
@@ -95,9 +126,20 @@ def preflight(args, environ=os.environ, which=shutil.which):
     if narration is None and not api_key:
         raise ValueError("GEMINI_API_KEY is required without --narration")
 
-    output = args.out.expanduser().resolve()
-    if output.suffix.lower() != ".mp4":
+    lexical_output = Path(os.path.abspath(args.out.expanduser()))
+    if lexical_output.suffix.lower() != ".mp4":
         raise ValueError("output must use the .mp4 extension")
+    lexical_targets = (
+        lexical_output,
+        lexical_output.with_suffix(".qa.json"),
+        lexical_output.with_name(lexical_output.stem + "-qa-sheet.jpg"),
+        lexical_output.parent / "post_caption.txt",
+        lexical_output.parent / "captions.json",
+    )
+    for target in lexical_targets:
+        _absent(target)
+
+    output = lexical_output.resolve()
     draft_parent = output.parent.parent / "draft" if output.parent.name == "candidate" else output.parent / "draft"
     draft = draft_parent / output.name
     report = output.with_suffix(".qa.json")
@@ -106,12 +148,26 @@ def preflight(args, environ=os.environ, which=shutil.which):
     draft_sheet = draft.with_name(draft.stem + "-qa-sheet.jpg")
     post_caption = output.parent / "post_caption.txt"
     captions_json = output.parent / "captions.json"
-    for target in (output, report, sheet, draft, draft_report, draft_sheet, post_caption, captions_json):
+    lock = output.parent / f".{output.name}.lock"
+    for target in (output, report, sheet, post_caption, captions_json):
         _absent(target)
     return Context(
-        manifest, config, assets, bgm, output, draft, report, sheet,
-        draft_report, draft_sheet, post_caption, captions_json, api_key,
-        narration,
+        manifest=manifest,
+        config=config,
+        assets=assets,
+        bgm=bgm,
+        output=output,
+        draft=draft,
+        report=report,
+        sheet=sheet,
+        draft_report=draft_report,
+        draft_sheet=draft_sheet,
+        post_caption=post_caption,
+        captions_json=captions_json,
+        draft_parent=draft_parent,
+        lock=lock,
+        api_key=api_key,
+        narration=narration,
     )
 
 
@@ -164,25 +220,38 @@ def _promote(context):
 
 def run_cli(argv=None, *, environ=os.environ, which=shutil.which, render_func=render_video, qa_func=run_qa):
     context = preflight(build_parser().parse_args(argv), environ=environ, which=which)
-    context.draft.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="ranking-shorts-input-") as temporary:
-        project = Path(temporary)
-        for rank, asset in context.assets.items():
-            (project / f"rank-{rank}{asset.suffix.lower()}").symlink_to(asset)
-        (project / f"bgm{context.bgm.suffix.lower()}").symlink_to(context.bgm)
-        kwargs = {}
-        api_key = context.api_key
-        if context.narration is not None:
-            def use_prebuilt(text, key, output, **ignored):
-                del text, key, ignored
-                shutil.copyfile(context.narration, output)
-
-            kwargs["tts_func"] = use_prebuilt
-            api_key = "prebuilt-narration"
-        render_func(project, context.manifest, context.config, api_key, context.draft, **kwargs)
-    qa_func(context.draft, context.config, context.draft_report, context.draft_sheet)
-    _promote(context)
-    return context.output
+    with exclusive_reservation(context.lock):
+        for target in _candidate_targets(context):
+            _absent(target)
+        context.draft_parent.mkdir(parents=True, exist_ok=True)
+        run_directory = Path(
+            tempfile.mkdtemp(prefix=f"{context.output.stem}-", dir=context.draft_parent)
+        )
+        runtime = replace(
+            context,
+            draft=run_directory / context.output.name,
+            draft_report=(run_directory / context.output.name).with_suffix(".qa.json"),
+            draft_sheet=(run_directory / context.output.name).with_name(
+                context.output.stem + "-qa-sheet.jpg"
+            ),
+        )
+        with tempfile.TemporaryDirectory(prefix="ranking-shorts-input-") as temporary:
+            project = Path(temporary)
+            for rank, asset in runtime.assets.items():
+                (project / f"rank-{rank}{asset.suffix.lower()}").symlink_to(asset)
+            (project / f"bgm{runtime.bgm.suffix.lower()}").symlink_to(runtime.bgm)
+            render_func(
+                project,
+                runtime.manifest,
+                runtime.config,
+                runtime.api_key,
+                runtime.draft,
+                prebuilt_narration=runtime.narration,
+            )
+        qa_func(runtime.draft, runtime.config, runtime.draft_report, runtime.draft_sheet)
+        _promote(runtime)
+        run_directory.rmdir()
+        return runtime.output
 
 
 def main():

@@ -133,7 +133,6 @@ class CliTests(unittest.TestCase):
                     environ={"GEMINI_API_KEY": "test-key"},
                     which=lambda name: f"/bin/{name}",
                 )
-
             bgm.write_bytes(b"synthetic-bgm")
             output.parent.mkdir()
             output.write_bytes(b"existing")
@@ -143,6 +142,29 @@ class CliTests(unittest.TestCase):
                     environ={"GEMINI_API_KEY": "test-key"},
                     which=lambda name: f"/bin/{name}",
                 )
+
+    def test_preflight_rejects_existing_broken_output_symlink_before_resolve(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, assets, bgm, narration = self.make_project(root)
+            output = root / "candidate" / "video.mp4"
+            output.parent.mkdir()
+            output.symlink_to(root / "missing-target.mp4")
+            args = self.cli.build_parser().parse_args(
+                self.argv(manifest, assets, bgm, output, narration)
+            )
+
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                self.cli.preflight(args, environ={}, which=lambda name: f"/bin/{name}")
+
+    def test_exclusive_reservation_rejects_a_concurrent_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            lock = Path(temporary) / ".video.mp4.lock"
+            with self.cli.exclusive_reservation(lock):
+                with self.assertRaisesRegex(ValueError, "already running"):
+                    with self.cli.exclusive_reservation(lock):
+                        self.fail("concurrent reservation unexpectedly succeeded")
+            self.assertFalse(lock.exists())
 
     def test_rank_asset_discovery_accepts_images_and_videos_but_rejects_duplicates(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -176,8 +198,10 @@ class CliTests(unittest.TestCase):
             events = []
 
             def fake_render(project, parsed_manifest, config, key, draft, **kwargs):
-                del project, parsed_manifest, config, key, kwargs
+                del project, parsed_manifest, config, key
                 events.append("render")
+                events.append(("prebuilt", kwargs.get("prebuilt_narration")))
+                events.append(("draft", draft))
                 draft.parent.mkdir(parents=True, exist_ok=True)
                 draft.write_bytes(b"synthetic-mp4")
                 return draft
@@ -198,7 +222,17 @@ class CliTests(unittest.TestCase):
                 qa_func=fake_qa,
             )
 
-            self.assertEqual(events, ["render", "qa"])
+            draft_event = next(
+                event[1]
+                for event in events
+                if isinstance(event, tuple) and event[0] == "draft"
+            )
+            self.assertEqual(events[0], "render")
+            self.assertEqual(events[1], ("prebuilt", narration.resolve()))
+            self.assertEqual(events[-1], "qa")
+            self.assertEqual(draft_event.parent.parent, root.resolve() / "draft")
+            self.assertNotEqual(draft_event.parent, root.resolve() / "draft")
+            self.assertFalse(draft_event.parent.exists())
             self.assertEqual(result, output.resolve())
             self.assertTrue(output.is_file())
             self.assertTrue(output.with_suffix(".qa.json").is_file())
@@ -244,7 +278,9 @@ class CliTests(unittest.TestCase):
                     render_func=fake_render,
                     qa_func=failing_qa,
                 )
-            self.assertTrue((root / "draft" / "video.mp4").is_file())
+            retained = list((root / "draft").glob("*/video.mp4"))
+            self.assertEqual(len(retained), 1)
+            self.assertTrue(retained[0].is_file())
             self.assertFalse(output.exists())
             self.assertFalse((output.parent / "post_caption.txt").exists())
             self.assertFalse((output.parent / "captions.json").exists())
@@ -268,9 +304,19 @@ class CliTests(unittest.TestCase):
 
 
 class QaTests(unittest.TestCase):
-    def fake_runner(self, payload, *, black=False, decode_failure=False):
+    def fake_runner(
+        self,
+        payload,
+        *,
+        black=False,
+        decode_failure=False,
+        contact_frames=27,
+        calls=None,
+    ):
         def runner(command, **kwargs):
             del kwargs
+            if calls is not None:
+                calls.append(command)
             if command[0] == "ffprobe":
                 return subprocess.CompletedProcess(
                     command, 0, json.dumps(payload).encode("utf-8"), b""
@@ -282,7 +328,7 @@ class QaTests(unittest.TestCase):
             if "fps=1/2" in joined:
                 pattern = Path(command[-1])
                 pattern.parent.mkdir(parents=True, exist_ok=True)
-                for index in range(1, 5):
+                for index in range(1, contact_frames + 1):
                     Image.new("RGB", (72, 128), (index * 40, 20, 20)).save(
                         pattern.parent / f"frame-{index:03d}.jpg"
                     )
@@ -300,12 +346,13 @@ class QaTests(unittest.TestCase):
             video.write_bytes(b"synthetic-mp4")
             report = root / "draft.qa.json"
             sheet = root / "draft-qa-sheet.jpg"
+            calls = []
             result = run_qa(
                 video,
                 RenderConfig(720, 1280),
                 report,
                 sheet,
-                runner=self.fake_runner(probe_payload()),
+                runner=self.fake_runner(probe_payload(), calls=calls),
             )
             body = json.loads(report.read_text(encoding="utf-8"))
             self.assertTrue(body["passed"])
@@ -314,6 +361,26 @@ class QaTests(unittest.TestCase):
             self.assertEqual(body["blackSegments"], [])
             self.assertTrue(sheet.is_file())
             self.assertEqual(result.report_path, report)
+            decode = next(
+                command
+                for command in calls
+                if command[0] == "ffmpeg" and "-map" in command
+            )
+            self.assertIn("-xerror", decode)
+
+    def test_qa_rejects_incomplete_contact_sheet(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            video = root / "draft.mp4"
+            video.write_bytes(b"synthetic-mp4")
+            with self.assertRaisesRegex(QaError, "27"):
+                run_qa(
+                    video,
+                    RenderConfig(720, 1280),
+                    root / "report.json",
+                    root / "sheet.jpg",
+                    runner=self.fake_runner(probe_payload(), contact_frames=26),
+                )
 
     def test_qa_rejects_stream_fps_dimension_duration_and_black_failures(self):
         invalid = [

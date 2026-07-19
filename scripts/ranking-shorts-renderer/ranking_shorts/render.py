@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 import tempfile
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +25,9 @@ TIMELINE = (
 )
 VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".m4v", ".webm"})
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+MAX_ASSET_SECONDS = 54
+MAX_SAFE_TEMPO = 1.25
+ISO_MONTH = re.compile(r"(?<!\d)(\d{4})-(0[1-9]|1[0-2])(?!\d)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,11 +42,24 @@ def _metric_text(value):
     return f"{float(value):,.2f}".rstrip("0").rstrip(".")
 
 
+def _spoken_month(month):
+    year, number = month.split("-", 1)
+    return f"{int(year)}年{int(number)}月"
+
+
+def _naturalize_months(text):
+    return ISO_MONTH.sub(
+        lambda match: f"{int(match.group(1))}年{int(match.group(2))}月",
+        text,
+    )
+
+
 def build_script(manifest):
     ordered = tuple(sorted(manifest.items, key=lambda item: item.rank, reverse=True))
-    captions = [f"{manifest.month}の人気コンテンツ、トップ3。"]
+    captions = [f"{_spoken_month(manifest.month)}の人気コンテンツ、トップ3。"]
     captions.extend(
-        f"第{item.rank}位。{item.title}。{manifest.ranking_label}は、"
+        f"第{item.rank}位。{_naturalize_months(item.title)}。"
+        f"{_naturalize_months(manifest.ranking_label)}は、"
         f"{_metric_text(item.metric_value)}回でした。"
         for item in ordered
     )
@@ -85,13 +104,17 @@ def materialize_asset_frames(asset, directory, config, *, runner=subprocess.run)
     pattern = directory / "frame-%06d.png"
     command = [
         "ffmpeg",
-        "-y",
+        "-n",
         "-v",
         "error",
         "-i",
         str(asset),
+        "-t",
+        str(MAX_ASSET_SECONDS),
         "-vf",
         f"fps={config.fps}",
+        "-frames:v",
+        str(MAX_ASSET_SECONDS * config.fps),
         str(pattern),
     ]
     run_ffmpeg(command, runner=runner, stage="asset decode")
@@ -164,6 +187,69 @@ def _asset_image(paths, frame_number):
         return source.convert("RGB").copy()
 
 
+def scene_frame_number(name, frame_index, fps):
+    starts = {entry_name: start for entry_name, start, _ in TIMELINE}
+    if name not in starts:
+        raise ValueError(f"unknown timeline scene: {name}")
+    return max(0, frame_index - starts[name] * fps)
+
+
+def render_outro_frame(manifest, materialized, config):
+    canvas = (config.width, config.height)
+    frame = Image.new("RGB", canvas, "#111827")
+    draw = ImageDraw.Draw(frame)
+    scale = config.width / 1080
+    margin = round(72 * scale)
+    title_font = load_font(round(64 * scale))
+    body_font = load_font(round(34 * scale))
+    rank_font = load_font(round(48 * scale))
+    draw.text((margin, margin), "TOP3一覧", font=title_font, fill="white")
+
+    top = margin + round(100 * scale)
+    bottom = config.height - margin
+    gap = round(24 * scale)
+    card_height = (bottom - top - gap * 2) // 3
+    items = {item.rank: item for item in manifest.items}
+    for index, rank in enumerate((1, 2, 3)):
+        card_top = top + index * (card_height + gap)
+        card_bottom = card_top + card_height
+        draw.rounded_rectangle(
+            (margin, card_top, config.width - margin, card_bottom),
+            radius=round(24 * scale),
+            fill="#1f2937",
+            outline="#475569",
+            width=max(1, round(2 * scale)),
+        )
+        thumb_size = max(1, card_height - round(32 * scale))
+        thumb = fit_asset(_asset_image(materialized[rank], 0), (thumb_size, thumb_size))
+        thumb_left = margin + round(16 * scale)
+        thumb_top = card_top + round(16 * scale)
+        frame.paste(thumb, (thumb_left, thumb_top))
+        text_left = thumb_left + thumb_size + round(24 * scale)
+        draw.text(
+            (text_left, card_top + round(28 * scale)),
+            f"第{rank}位",
+            font=rank_font,
+            fill="#facc15",
+        )
+        title = "\n".join(semantic_lines(items[rank].title, 16))
+        draw.multiline_text(
+            (text_left, card_top + round(96 * scale)),
+            title,
+            font=body_font,
+            fill="white",
+            spacing=max(1, round(7 * scale)),
+        )
+        draw.text(
+            (config.width - margin - round(24 * scale), card_bottom - round(28 * scale)),
+            _metric_text(items[rank].metric_value),
+            font=body_font,
+            fill="#cbd5e1",
+            anchor="rs",
+        )
+    return frame
+
+
 def render_frames(project_dir, manifest, config, directory, *, runner=subprocess.run):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -185,9 +271,16 @@ def render_frames(project_dir, manifest, config, directory, *, runner=subprocess
     for frame_index in range(total_frames):
         seconds = frame_index / config.fps
         caption_index, name = _timeline_entry(seconds)
+        if name == "outro":
+            frame = render_outro_frame(manifest, materialized, config)
+            frame = _caption_frame(frame, script.captions[caption_index], config)
+            frame.save(directory / f"frame-{frame_index + 1:06d}.png")
+            continue
+
         rank = 3 if name in {"hook", "rank3"} else 2 if name == "rank2" else 1
         item = items[rank]
-        asset = _asset_image(materialized[rank], frame_index)
+        local_frame = scene_frame_number(name, frame_index, config.fps)
+        asset = _asset_image(materialized[rank], local_frame)
 
         transition_start = next(
             (start for start in starts if start <= seconds < start + 1),
@@ -217,7 +310,7 @@ def build_ffmpeg_command(frames, narration, bgm, output, config):
     )
     return [
         "ffmpeg",
-        "-y",
+        "-n",
         "-v",
         "error",
         "-framerate",
@@ -256,6 +349,91 @@ def build_ffmpeg_command(frames, narration, bgm, output, config):
     ]
 
 
+def _wav_duration(path):
+    try:
+        with wave.open(str(path), "rb") as source:
+            rate = source.getframerate()
+            frames = source.getnframes()
+    except (OSError, EOFError, wave.Error):
+        raise RuntimeError("TTS did not create valid PCM WAV audio") from None
+    if rate <= 0 or frames <= 0:
+        raise RuntimeError("TTS created empty audio")
+    return frames / rate
+
+
+def build_aligned_narration_command(segments, durations, output):
+    if len(segments) != len(TIMELINE) or len(durations) != len(TIMELINE):
+        raise ValueError("timeline narration requires one segment per caption")
+    command = ["ffmpeg", "-n", "-v", "error"]
+    for segment in segments:
+        command.extend(("-i", str(segment)))
+
+    filters = []
+    labels = []
+    for index, ((_, start, end), duration) in enumerate(zip(TIMELINE, durations)):
+        slot = end - start
+        if duration <= 0:
+            raise RuntimeError("TTS created empty audio")
+        tempo = duration / slot
+        if tempo > MAX_SAFE_TEMPO:
+            raise RuntimeError(f"TTS segment {index + 1} is too long for its timeline slot")
+        chain = "aformat=sample_rates=44100:channel_layouts=stereo,"
+        if tempo > 1:
+            chain += f"atempo={tempo:.6f},"
+        chain += f"apad,atrim=duration={slot},adelay={start * 1000}:all=1"
+        label = f"segment{index}"
+        filters.append(f"[{index}:a]{chain}[{label}]")
+        labels.append(f"[{label}]")
+    filters.append(
+        "".join(labels)
+        + f"amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0,"
+        + "atrim=duration=54[mixed]"
+    )
+    command.extend(
+        (
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[mixed]",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-c:a",
+            "pcm_s16le",
+            str(output),
+        )
+    )
+    return command
+
+
+def synthesize_timeline_narration(
+    captions,
+    api_key,
+    workspace,
+    output,
+    *,
+    tts_func=synthesize_narration,
+    runner=subprocess.run,
+):
+    segments = []
+    durations = []
+    for index, caption in enumerate(captions):
+        segment = workspace / f"narration-{index:02d}.wav"
+        tts_func(
+            caption,
+            api_key.strip(),
+            segment,
+            model=os.environ.get("GEMINI_TTS_MODEL"),
+            runner=runner,
+        )
+        segments.append(segment)
+        durations.append(_wav_duration(segment))
+    command = build_aligned_narration_command(segments, durations, output)
+    run_ffmpeg(command, runner=runner, stage="narration alignment")
+    return output
+
+
 def render_video(
     project_dir,
     manifest,
@@ -266,8 +444,9 @@ def render_video(
     tts_func=synthesize_narration,
     frames_func=render_frames,
     runner=subprocess.run,
+    prebuilt_narration=None,
 ):
-    if not isinstance(api_key, str) or not api_key.strip():
+    if prebuilt_narration is None and (not isinstance(api_key, str) or not api_key.strip()):
         raise ValueError("Gemini API key is required")
     project_dir = Path(project_dir)
     output = Path(output)
@@ -280,13 +459,20 @@ def render_video(
         narration = workspace / "narration.wav"
         frames_dir = workspace / "frames"
         frames_dir.mkdir(parents=True, exist_ok=True)
-        tts_func(
-            "\n".join(script.captions),
-            api_key.strip(),
-            narration,
-            model=os.environ.get("GEMINI_TTS_MODEL"),
-            runner=runner,
-        )
+        if prebuilt_narration is not None:
+            source = Path(prebuilt_narration)
+            if not source.is_file():
+                raise ValueError("prebuilt narration is missing")
+            shutil.copyfile(source, narration)
+        else:
+            synthesize_timeline_narration(
+                script.captions,
+                api_key,
+                workspace,
+                narration,
+                tts_func=tts_func,
+                runner=runner,
+            )
         frames = frames_func(
             project_dir,
             manifest,

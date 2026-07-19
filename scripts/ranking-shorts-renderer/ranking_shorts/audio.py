@@ -112,7 +112,7 @@ def write_trimmed_wav(audio, output, *, runner=subprocess.run):
         raw_pcm.flush()
         command = [
             "ffmpeg",
-            "-y",
+            "-n",
             "-v",
             "error",
             "-f",
