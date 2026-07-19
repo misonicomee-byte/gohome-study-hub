@@ -8,7 +8,7 @@ Podcastは既存の全Podcastエピソードに対応するYouTube動画を対�
 
 - Node.js、Python、ffmpeg、ffprobeとレンダラーのPython依存関係を用意する。
 - ランキング収集に必要な環境変数を設定する。
-  - `CONTENT_ANALYTICS_GAS_URL`
+- GitHub ActionsではRepository variable `CONTENT_ANALYTICS_GAS_URL` に公開・読み取り専用GAS URLを設定する。ローカル実行では同名の環境変数を設定する。
   - `YOUTUBE_CLIENT_ID`
   - `YOUTUBE_CLIENT_SECRET`
   - `YOUTUBE_REFRESH_TOKEN`

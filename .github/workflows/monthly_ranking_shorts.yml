@@ -81,7 +81,7 @@ jobs:
       - run: PYTHONPATH=scripts/ranking-shorts-renderer python -m unittest discover -s scripts/ranking-shorts-renderer/tests -v
       - name: Generate one review draft
         env:
-          CONTENT_ANALYTICS_GAS_URL: ${{ secrets.CONTENT_ANALYTICS_GAS_URL }}
+          CONTENT_ANALYTICS_GAS_URL: ${{ vars.CONTENT_ANALYTICS_GAS_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
