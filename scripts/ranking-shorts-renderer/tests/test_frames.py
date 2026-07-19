@@ -198,6 +198,21 @@ class FrameTests(unittest.TestCase):
             self.assertEqual(first.mode, "RGB")
             self.assertEqual(first.tobytes(), second.tobytes())
 
+    def test_cutout_has_a_high_contrast_light_edge(self):
+        config = RenderConfig(width=720, height=1280, motion="cutout-zoom")
+        rendered = render_transition_frame(
+            "3",
+            Image.new("RGB", (720, 1280), "#e56b6f"),
+            Image.new("RGB", (720, 1280), "#24324a"),
+            0.35,
+            config,
+        )
+        colors = {
+            color: count
+            for count, color in rendered.getcolors(maxcolors=720 * 1280)
+        }
+        self.assertGreater(colors[(255, 244, 237)], 100)
+
     def test_all_transitions_finish_on_the_exact_next_frame(self):
         for canvas in ((1080, 1920), (720, 1280)):
             next_frame = Image.new("RGB", canvas, "#e56b6f")

@@ -1,7 +1,7 @@
 import re
 import unicodedata
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter
 
 from .layout import load_font, safe_area
 from .motions import motion_state
@@ -273,11 +273,13 @@ def render_rank_frame(manifest, item, asset, time, config):
     return frame.convert("RGB")
 
 
-def _text_mask(text, canvas, font_size=190):
+def _text_mask(text, canvas, font_size=None):
     mask = Image.new("L", canvas, 0)
     if not text:
         return mask
     draw = ImageDraw.Draw(mask)
+    if font_size is None:
+        font_size = _scaled(560 if len(text) == 1 and text.isdigit() else 320, canvas)
     max_width = canvas[0] - _scaled(144, canvas)
     rendered, font, spacing = _multiline(
         draw,
@@ -412,7 +414,23 @@ def render_transition_frame(text, next_frame, background, progress, config):
     if config.motion == "cutout-zoom":
         state = motion_state(config.motion, progress, len(text))
         mask = _scaled_center_mask(_text_mask(text, canvas), state["scale"])
-        return Image.composite(next_image, background_image, mask)
+        # Make the cutout legible even when both source images have similar values:
+        # darken the outside, lift the content inside, and trace the letter edge.
+        outside = Image.blend(
+            background_image,
+            Image.new("RGB", canvas, "#0b1628"),
+            0.42,
+        )
+        inside = ImageEnhance.Contrast(next_image).enhance(1.12)
+        inside = ImageEnhance.Brightness(inside).enhance(1.08)
+        result = Image.composite(inside, outside, mask)
+        outline_size = max(3, round(15 * canvas[0] / 1080))
+        if outline_size % 2 == 0:
+            outline_size += 1
+        expanded = mask.filter(ImageFilter.MaxFilter(outline_size))
+        outline = ImageChops.subtract(expanded, mask)
+        result.paste(Image.new("RGB", canvas, "#fff4ed"), mask=outline)
+        return result
 
     if config.motion == "split-reveal":
         state = motion_state(config.motion, progress, len(text))

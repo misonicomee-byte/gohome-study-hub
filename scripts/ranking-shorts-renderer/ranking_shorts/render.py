@@ -12,6 +12,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from .audio import synthesize_narration
+from .easing import ease_in_out
 from .frames import (
     display_title,
     fit_asset,
@@ -35,6 +36,11 @@ IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 MAX_ASSET_SECONDS = TOTAL_SECONDS
 MAX_SAFE_TEMPO = 1.25
 ISO_MONTH = re.compile(r"(?<!\d)(\d{4})-(0[1-9]|1[0-2])(?!\d)")
+TRANSITION_SECONDS = 1.05
+BRAND_LOGO_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets/monthly-ranking-shorts/clinic-logo.png"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,30 +307,128 @@ def render_hook_frame(manifest, config, seedance_frame=None):
     return frame
 
 
-def render_cta_frame(manifest, config):
+def render_cta_frame(manifest, config, progress=1.0):
     canvas = (config.width, config.height)
-    frame = Image.new("RGB", canvas, "#111827")
+    frame = Image.new("RGB", canvas, "#fff8f3")
     draw = ImageDraw.Draw(frame)
     scale = config.width / 1080
     center_x = config.width // 2
-    eyebrow = load_font(round(34 * scale))
-    headline = load_font(round(72 * scale))
-    body = load_font(round(38 * scale))
+    reveal = ease_in_out(progress)
+    rise = round((1 - reveal) * 70 * scale)
+    eyebrow = load_font(round(31 * scale))
+    headline = load_font(round(68 * scale))
+    body = load_font(round(37 * scale))
+    button_font = load_font(round(40 * scale))
     noun = "エピソード" if manifest.channel == "podcast" else "内容"
-    draw.text((center_x, round(560 * scale)), "続きは概要欄から", font=headline, fill="white", anchor="mm")
-    draw.text((center_x, round(720 * scale)), f"気になる{noun}をチェック", font=body, fill="#cbd5e1", anchor="mm")
+    channel = {
+        "youtube": "YOUTUBE MONTHLY TOP3",
+        "blog": "BLOG MONTHLY TOP3",
+        "instagram": "INSTAGRAM MONTHLY TOP3",
+        "podcast": "PODCAST MONTHLY TOP3",
+    }.get(manifest.channel, "MONTHLY TOP3")
+
+    # Branded depth without returning to the flat navy field.
+    draw.ellipse(
+        (
+            -round(250 * scale),
+            -round(180 * scale),
+            round(430 * scale),
+            round(500 * scale),
+        ),
+        fill="#ffe0df",
+    )
+    draw.ellipse(
+        (
+            config.width - round(280 * scale),
+            round(1420 * scale),
+            config.width + round(170 * scale),
+            round(1870 * scale),
+        ),
+        fill="#ffe8bd",
+    )
+    card = (
+        round(86 * scale),
+        round(130 * scale) + rise,
+        config.width - round(86 * scale),
+        round(1690 * scale) + rise,
+    )
+    shadow = (
+        card[0] + round(12 * scale),
+        card[1] + round(18 * scale),
+        card[2] + round(12 * scale),
+        card[3] + round(18 * scale),
+    )
+    draw.rounded_rectangle(shadow, radius=round(54 * scale), fill="#ead6d5")
+    draw.rounded_rectangle(
+        card,
+        radius=round(54 * scale),
+        fill="white",
+        outline="#f4d5d4",
+        width=max(1, round(2 * scale)),
+    )
+
+    if not BRAND_LOGO_PATH.is_file():
+        raise RuntimeError("clinic logo asset is missing")
+    with Image.open(BRAND_LOGO_PATH) as source_logo:
+        logo_size = max(1, round((270 + 24 * reveal) * scale))
+        logo = source_logo.convert("RGBA").resize(
+            (logo_size, logo_size), Image.Resampling.LANCZOS
+        )
+    logo_y = round(245 * scale) + rise
+    frame.paste(logo, (center_x - logo_size // 2, logo_y), logo)
+
+    draw.text(
+        (center_x, round(620 * scale) + rise),
+        channel,
+        font=eyebrow,
+        fill="#cf002b",
+        anchor="mm",
+    )
+    draw.text(
+        (center_x, round(790 * scale) + rise),
+        "続きは概要欄から",
+        font=headline,
+        fill="#172033",
+        anchor="mm",
+    )
+    draw.text(
+        (center_x, round(920 * scale) + rise),
+        f"気になる{noun}をチェック",
+        font=body,
+        fill="#536072",
+        anchor="mm",
+    )
     draw.rounded_rectangle(
         (
             round(150 * scale),
-            round(930 * scale),
+            round(1080 * scale) + rise,
             config.width - round(150 * scale),
-            round(1090 * scale),
+            round(1250 * scale) + rise,
         ),
         radius=round(36 * scale),
-        fill="#facc15",
+        fill="#cf002b",
     )
-    draw.text((center_x, round(1010 * scale)), "ごうホームクリニック", font=body, fill="#111827", anchor="mm")
-    draw.text((center_x, round(1280 * scale)), "gohome-clinic.com", font=eyebrow, fill="#94a3b8", anchor="mm")
+    draw.text(
+        (center_x, round(1165 * scale) + rise),
+        "公式サイトを見る",
+        font=button_font,
+        fill="white",
+        anchor="mm",
+    )
+    draw.text(
+        (center_x, round(1400 * scale) + rise),
+        "ごうホームクリニック",
+        font=body,
+        fill="#172033",
+        anchor="mm",
+    )
+    draw.text(
+        (center_x, round(1490 * scale) + rise),
+        "gohome-clinic.com",
+        font=eyebrow,
+        fill="#cf002b",
+        anchor="mm",
+    )
     return frame
 
 
@@ -360,7 +464,7 @@ def render_frames(project_dir, manifest, config, directory, *, runner=subprocess
         seconds = frame_index / config.fps
         _, name = _timeline_entry(seconds)
         transition_start = next(
-            (start for start in starts if start <= seconds < start + 0.8),
+            (start for start in starts if start <= seconds < start + TRANSITION_SECONDS),
             None,
         )
         seedance_frame = (
@@ -372,10 +476,10 @@ def render_frames(project_dir, manifest, config, directory, *, runner=subprocess
             hook = render_hook_frame(manifest, config, seedance_frame)
             if transition_start is not None:
                 frame = render_transition_frame(
-                    f"{_spoken_month(manifest.month)} TOP3",
+                    "TOP 3",
                     hook,
                     background,
-                    (seconds - transition_start) / 0.8,
+                    (seconds - transition_start) / TRANSITION_SECONDS,
                     config,
                 )
             else:
@@ -386,7 +490,7 @@ def render_frames(project_dir, manifest, config, directory, *, runner=subprocess
             frame = (
                 render_outro_frame(manifest, materialized, config)
                 if seconds < 38
-                else render_cta_frame(manifest, config)
+                else render_cta_frame(manifest, config, (seconds - 38) / 0.7)
             )
             frame.save(directory / f"frame-{frame_index + 1:06d}.png")
             continue
@@ -399,10 +503,10 @@ def render_frames(project_dir, manifest, config, directory, *, runner=subprocess
         if transition_start is not None:
             next_frame = fit_asset(asset, (config.width, config.height))
             frame = render_transition_frame(
-                f"第{rank}位",
+                str(rank),
                 next_frame,
                 seedance_frame if seedance_frame is not None else background,
-                (seconds - transition_start) / 0.8,
+                (seconds - transition_start) / TRANSITION_SECONDS,
                 config,
             )
         else:

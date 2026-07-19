@@ -22,7 +22,7 @@ python3 scripts/ranking-shorts-renderer/main.py \
   --out candidate/ranking-short.mp4
 ```
 
-`--placement` は `hook`、`chapter`、`none` のいずれかです。`hook` は冒頭、`chapter` は冒頭と各順位の開始、`none` は文字くり抜きなしです。Seedanceは既存の `fal-seedance` ワークフローで文字なしの共通背景を生成します。`chapter:cutout-zoom` では「2026年6月 TOP3」「第3位」「第2位」「第1位」の文字内に次の画像または動画を映し、文字外にSeedance背景を映してから拡大します。日本語、年月、順位、字幕は動画モデルに描かせず、rendererで正確に合成します。順位素材には `rank-1.mp4` も使用できます。
+`--placement` は `hook`、`chapter`、`none` のいずれかです。`hook` は冒頭、`chapter` は冒頭と各順位の開始、`none` は文字くり抜きなしです。Seedanceは既存の `fal-seedance` ワークフローで文字なしの共通背景を生成します。`chapter:cutout-zoom` では冒頭の大きな `TOP 3`、章間の大きな `3・2・1` の内側に次の画像または動画を映し、外側を暗く、明色の輪郭を付けて1.05秒で拡大します。年月、正式順位、日本語字幕は直後のカードへrendererで正確に合成します。順位素材には `rank-1.mp4` も使用できます。
 
 renderer 本体は、ランキング schema・テスト・月次処理と同じ変更履歴で再現性を保つため、versioned `gohome-study-hub` リポジトリに置きます。`fal-seedance` はモーション背景とfal Stable Audioの媒体別BGMマスター生成を担当し、完成素材だけをこの renderer の入力にする境界です。
 

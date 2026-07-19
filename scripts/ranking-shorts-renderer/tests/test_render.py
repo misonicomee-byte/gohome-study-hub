@@ -19,6 +19,7 @@ from ranking_shorts.audio import (
 )
 from ranking_shorts.model import RenderConfig
 from ranking_shorts.render import (
+    BRAND_LOGO_PATH,
     TIMELINE,
     build_ffmpeg_command,
     build_script,
@@ -318,6 +319,13 @@ class RenderTests(unittest.TestCase):
                 result = render_cta_frame(fake_manifest(), RenderConfig(*canvas))
                 self.assertEqual(result.size, canvas)
                 self.assertEqual(result.mode, "RGB")
+                self.assertTrue(BRAND_LOGO_PATH.is_file())
+                colors = {
+                    color: count
+                    for count, color in result.getcolors(maxcolors=canvas[0] * canvas[1])
+                }
+                self.assertGreater(colors[(207, 0, 43)], canvas[0])
+                self.assertEqual(result.getpixel((canvas[0] - 1, 0)), (255, 248, 243))
 
     def test_hook_can_use_seedance_footage_without_surrendering_local_text(self):
         config = RenderConfig(720, 1280)
