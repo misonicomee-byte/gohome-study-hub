@@ -53,6 +53,18 @@ function requireSnippet(id, snippet) {
   return snippet;
 }
 
+function durationSeconds(contentDetails) {
+  if (contentDetails === undefined) return null;
+  const value = contentDetails?.duration;
+  const match = typeof value === "string"
+    ? /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/u.exec(value)
+    : null;
+  if (!match || !match.slice(1).some(Boolean)) {
+    throw new Error("YouTube returned invalid video duration");
+  }
+  return (Number(match[1] ?? 0) * 3600) + (Number(match[2] ?? 0) * 60) + Number(match[3] ?? 0);
+}
+
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -88,13 +100,17 @@ export function requireCompletedYouTubeReportingPeriod(period, now = new Date())
   }
 }
 
-function requireAnalyticsRow(row, seenIds) {
-  if (!Array.isArray(row) || row.length !== 4) {
+function requireAnalyticsRow(row, seenIds, includesContentType) {
+  const expectedLength = includesContentType ? 4 : 3;
+  if (!Array.isArray(row) || row.length !== expectedLength) {
     throw new Error("YouTube returned invalid Analytics rows");
   }
-  const [id, creatorContentType, views, engagedViews] = row;
+  const [id, creatorContentType, views, engagedViews] = includesContentType
+    ? row
+    : [row[0], null, row[1], row[2]];
   if (typeof id !== "string" || !id.trim() || id !== id.trim()
-    || typeof creatorContentType !== "string" || !creatorContentType.trim()) {
+    || (includesContentType
+      && (typeof creatorContentType !== "string" || !creatorContentType.trim()))) {
     throw new Error("YouTube returned invalid Analytics rows");
   }
   if (seenIds.has(id)) throw new Error(`YouTube returned duplicate Analytics video id ${id}`);
@@ -112,6 +128,7 @@ async function collectAnalyticsItems({ channelId, period, fetchImpl, headers, no
   const analyticsItems = [];
   const seenIds = new Set();
   let startIndex = 1;
+  let includesContentType = true;
 
   while (true) {
     const query = new URL("https://youtubeanalytics.googleapis.com/v2/reports");
@@ -120,14 +137,24 @@ async function collectAnalyticsItems({ channelId, period, fetchImpl, headers, no
       startDate: period.startDate,
       endDate: period.endDate,
       metrics: "views,engagedViews",
-      dimensions: "video,creatorContentType",
-      sort: "-views,-engagedViews",
+      dimensions: includesContentType ? "video,creatorContentType" : "video",
+      sort: includesContentType ? "-views,-engagedViews" : "-views",
       maxResults: String(ANALYTICS_PAGE_SIZE),
       startIndex: String(startIndex),
     });
 
     const analyticsResponse = await fetchImpl(query, { headers });
-    if (!analyticsResponse.ok) throw responseError("YouTube Analytics", analyticsResponse.status);
+    if (!analyticsResponse.ok) {
+      // In July 2026 the targeted-query API started rejecting the documented
+      // top-videos + creatorContentType combination for some channels. Retry
+      // the supported video-only report, then apply the established
+      // three-minute Shorts-candidate rule using Data API durations below.
+      if (analyticsResponse.status === 400 && includesContentType && startIndex === 1) {
+        includesContentType = false;
+        continue;
+      }
+      throw responseError("YouTube Analytics", analyticsResponse.status);
+    }
     const analyticsBody = await analyticsResponse.json();
     if (analyticsBody?.query !== undefined
       && (!isObject(analyticsBody.query)
@@ -141,7 +168,7 @@ async function collectAnalyticsItems({ channelId, period, fetchImpl, headers, no
       throw new Error("YouTube returned invalid Analytics payload");
     }
     for (const row of rows) {
-      analyticsItems.push(requireAnalyticsRow(row, seenIds));
+      analyticsItems.push(requireAnalyticsRow(row, seenIds, includesContentType));
     }
 
     if (rows.length < ANALYTICS_PAGE_SIZE) break;
@@ -159,7 +186,7 @@ async function collectSnippets({ analyticsItems, fetchImpl, headers }) {
     const batchIds = batch.map(({ id }) => id);
     const expectedIds = new Set(batchIds);
     const detailsUrl = new URL("https://www.googleapis.com/youtube/v3/videos");
-    detailsUrl.search = new URLSearchParams({ part: "snippet", id: batchIds.join(",") });
+    detailsUrl.search = new URLSearchParams({ part: "snippet,contentDetails", id: batchIds.join(",") });
     const detailsResponse = await fetchImpl(detailsUrl, { headers });
     if (!detailsResponse.ok) throw responseError("YouTube Data", detailsResponse.status);
     const detailsBody = await detailsResponse.json();
@@ -174,7 +201,10 @@ async function collectSnippets({ analyticsItems, fetchImpl, headers }) {
       if (snippetsById.has(item.id)) {
         throw new Error(`YouTube returned duplicate video metadata for ${item.id}`);
       }
-      snippetsById.set(item.id, requireSnippet(item.id, item.snippet));
+      snippetsById.set(item.id, {
+        ...requireSnippet(item.id, item.snippet),
+        durationSeconds: durationSeconds(item.contentDetails),
+      });
     }
   }
 
@@ -210,10 +240,18 @@ export async function collectYouTubeSnippets({ accessToken, analyticsItems, fetc
 
 export async function collectYouTubeRanking({ accessToken, channelId, period, now = new Date(), fetchImpl = fetch }) {
   const allAnalyticsItems = await collectYouTubeAnalyticsItems({ accessToken, channelId, period, now, fetchImpl });
-  const analyticsItems = allAnalyticsItems.filter(({ creatorContentType }) => creatorContentType === "SHORTS");
+  const needsDurationFallback = allAnalyticsItems.some(({ creatorContentType }) => creatorContentType === null);
+  const allSnippetsById = needsDurationFallback
+    ? await collectYouTubeSnippets({ accessToken, analyticsItems: allAnalyticsItems, fetchImpl })
+    : null;
+  const analyticsItems = allAnalyticsItems.filter((item) => item.creatorContentType === "SHORTS"
+    || (item.creatorContentType === null
+      && allSnippetsById.get(item.id).durationSeconds !== null
+      && allSnippetsById.get(item.id).durationSeconds <= 180));
   if (analyticsItems.length < 3) throw new Error("YouTube returned fewer than 3 Shorts");
 
-  const snippetsById = await collectYouTubeSnippets({ accessToken, analyticsItems, fetchImpl });
+  const snippetsById = allSnippetsById
+    ?? await collectYouTubeSnippets({ accessToken, analyticsItems, fetchImpl });
   const items = analyticsItems
     .map((item) => ({ ...item, snippet: snippetsById.get(item.id) }))
     .sort((a, b) => b.views - a.views

@@ -21,7 +21,7 @@ function japaneseMonth(month) {
 }
 
 const CONTROL = /[\u0000-\u001f\u007f]/u;
-const MEDICAL_CLAIM = /治る|治ります|完治|必ず|絶対|最高の医療|治療効果|(?:改善|予防)(?:する|します|できる|できます)|効果(?:が)?(?:ある|あります)/u;
+const MEDICAL_CLAIM = /治る|治ります|完治|絶対|最高の医療|治療効果|(?:改善|予防)(?:する|します|できる|できます)|効果(?:が)?(?:ある|あります)/u;
 
 function safeText(value, name) {
   if (typeof value !== "string" || !value.trim() || value.length > 500 || CONTROL.test(value)) {

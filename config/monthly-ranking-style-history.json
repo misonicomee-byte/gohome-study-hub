@@ -1,4 +1,11 @@
 {
   "schemaVersion": 1,
-  "entries": []
+  "entries": [
+    {
+      "channel": "podcast",
+      "month": "2026-06",
+      "placement": "chapter",
+      "motion": "cutout-zoom"
+    }
+  ]
 }

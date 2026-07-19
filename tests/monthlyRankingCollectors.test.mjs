@@ -110,6 +110,38 @@ test("YouTube requests the video and creatorContentType dimensions and keeps onl
   assert.equal(requests[1].searchParams.get("id"), "a,b,c,d");
 });
 
+test("YouTube falls back to the supported video report and three-minute Shorts rule", async () => {
+  const analyticsDimensions = [];
+  const fetchImpl = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === "youtubeanalytics.googleapis.com") {
+      analyticsDimensions.push(parsed.searchParams.get("dimensions"));
+      if (analyticsDimensions.length === 1) return jsonResponse({}, { ok: false, status: 400 });
+      return jsonResponse({ rows: [
+        ["long", 999, 99],
+        ["a", 100, 30],
+        ["b", 120, 20],
+        ["c", 100, 40],
+      ] });
+    }
+    const ids = parsed.searchParams.get("id").split(",");
+    return jsonResponse({ items: ids.map((id) => ({
+      ...detail(id),
+      contentDetails: { duration: id === "long" ? "PT3M1S" : "PT3M" },
+    })) });
+  };
+
+  const result = await collectYouTubeRanking({
+    accessToken: "test-token",
+    channelId: "UCtest",
+    period,
+    fetchImpl,
+  });
+
+  assert.deepEqual(analyticsDimensions, ["video,creatorContentType", "video"]);
+  assert.deepEqual(result.items.map((item) => item.contentId), ["b", "c", "a"]);
+});
+
 test("YouTube breaks equal monthly metrics by newest publish date then video id", async () => {
   const fetchImpl = async (url) => {
     const parsed = new URL(url);
