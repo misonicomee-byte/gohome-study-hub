@@ -339,12 +339,20 @@ function getPostInsights(mediaId) {
     `${mediaId}/insights?metric=views,reach,saved,shares,total_interactions`
   );
 
-  if (data.error) return { views: 0, reach: 0, saved: 0, shares: 0, total_interactions: 0 };
-
   const result = { views: 0, reach: 0, saved: 0, shares: 0, total_interactions: 0 };
-  (data.data || []).forEach(function (metric) {
-    if (metric.values && metric.values.length) {
-      result[metric.name] = Number(metric.values[0].value || 0);
+  if (!data || data.error || !Array.isArray(data.data)) return result;
+
+  data.data.forEach(function (metric) {
+    if (!metric || !Object.prototype.hasOwnProperty.call(result, metric.name) ||
+        !Array.isArray(metric.values) || !metric.values.length) return;
+
+    var value = metric.values[0];
+    var raw = value && typeof value === "object" ? value.value : undefined;
+    var numeric = typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "")
+      ? Number(raw)
+      : NaN;
+    if (Number.isFinite(numeric) && numeric >= 0) {
+      result[metric.name] = numeric;
     }
   });
   return result;

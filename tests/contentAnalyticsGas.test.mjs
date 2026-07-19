@@ -181,6 +181,68 @@ test("Instagram insights request and expose numeric views", () => {
   assert.equal(result.data[0].reach, 21);
 });
 
+test("Instagram insights keep safe zeros for API errors and malformed metrics", () => {
+  const context = loadGas();
+  context.__testInstagramApi = function (endpoint) {
+    if (endpoint.includes("/media?")) {
+      return {
+        data: [
+          { id: "post-error" },
+          { id: "post-missing" },
+          { id: "post-malformed" },
+          { id: "post-valid" },
+        ],
+      };
+    }
+    if (endpoint.startsWith("post-error/")) return { error: { message: "unavailable" } };
+    if (endpoint.startsWith("post-missing/")) return { data: null };
+    if (endpoint.startsWith("post-malformed/")) {
+      return {
+        data: [
+          null,
+          { name: "views" },
+          { name: "views", values: [{ value: -1 }] },
+          { name: "reach", values: [{ value: "not-a-number" }] },
+          { name: "saved", values: [{ value: Infinity }] },
+          { name: "shares", values: { value: 1 } },
+          { name: "shares", values: [{ value: true }] },
+          { name: "shares", values: [null] },
+          { name: "total_interactions", values: [{}] },
+          { name: "total_interactions", values: null },
+        ],
+      };
+    }
+    return {
+      data: [
+        { name: "views", values: [{ value: "42" }] },
+        { name: "reach", values: [{ value: 21 }] },
+        { name: "saved", values: [{ value: "3" }] },
+        { name: "shares", values: [{ value: 0 }] },
+        { name: "total_interactions", values: [{ value: "8" }] },
+      ],
+    };
+  };
+  vm.runInContext("callInstagramApi = __testInstagramApi", context);
+
+  const result = callJsonApi(context, { api: "instagram-posts", limit: "100" });
+
+  const metrics = result.data ? result.data.map(function (post) {
+    return {
+      views: post.views,
+      reach: post.reach,
+      saved: post.saved,
+      shares: post.shares,
+      total_interactions: post.total_interactions,
+    };
+  }) : result;
+  assert.deepEqual(JSON.parse(JSON.stringify(metrics)), [
+    { views: 0, reach: 0, saved: 0, shares: 0, total_interactions: 0 },
+    { views: 0, reach: 0, saved: 0, shares: 0, total_interactions: 0 },
+    { views: 0, reach: 0, saved: 0, shares: 0, total_interactions: 0 },
+    { views: 42, reach: 21, saved: 3, shares: 0, total_interactions: 8 },
+  ]);
+});
+
 test("source exposes the exact blog function signature", () => {
   assert.match(
     source,
