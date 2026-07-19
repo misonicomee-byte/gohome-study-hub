@@ -63,6 +63,14 @@ function descriptionLead(manifest, month, channelLabel) {
   return `${month}に多く見られた${channelLabel}コンテンツTOP3をご紹介します。`;
 }
 
+function narrationTitle(value, maxLength = 24) {
+  const withoutEpisodeNumber = value.replace(/^\s*\d{1,4}\s*/u, "").trim();
+  const firstClause = withoutEpisodeNumber.split(/[:：?？|｜]/u)[0].trim();
+  const candidate = firstClause.length >= 6 ? firstClause : withoutEpisodeNumber;
+  if (candidate.length <= maxLength) return candidate;
+  return `${candidate.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
 export function buildCopy(manifest) {
   validateManifest(manifest);
   if (!Object.hasOwn(CHANNEL_LABELS, manifest.channel)) throw new Error("invalid manifest copy input");
@@ -82,7 +90,7 @@ export function buildCopy(manifest) {
     : `${month}の${CHANNEL_LABELS[manifest.channel]}人気コンテンツ、トップ3をご紹介します。`];
   for (const item of ordered) {
     lines.push(isPodcast
-      ? `第${item.rank}位、${item.title}。前月増加再生数は、${item.metricValue.toLocaleString("ja-JP")}回でした。`
+      ? `第${item.rank}位、${narrationTitle(item.title)}。前月は${item.metricValue.toLocaleString("ja-JP")}回再生されました。`
       : `第${item.rank}位、${item.title}。${rankingLabel}は${item.metricValue.toLocaleString("ja-JP")}でした。`);
   }
   lines.push("気になる内容は、ごうホームクリニック公式チャンネルとサイトからご覧ください。");

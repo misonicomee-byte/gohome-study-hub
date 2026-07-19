@@ -83,6 +83,26 @@ test("Podcast copy uses the confirmed previous-month growth title and Pacific-ti
   assert.doesNotMatch(copy.postCaption + copy.narration, /人気コンテンツ|新着/);
 });
 
+test("Podcast narration shortens long episode titles while preserving full post copy", () => {
+  const longTitle = "173排尿ケアが人生を変える?尊厳を守るADL支援の実践";
+  const copy = buildCopy({
+    ...manifest,
+    channel: "podcast",
+    rankingLabel: "前月（2026-06）増加再生数（YouTube Analytics・太平洋時間）",
+    items: manifest.items.map((item, index) => ({
+      ...item,
+      title: index === 0 ? longTitle : item.title,
+      episodeGuid: `guid-${index}`,
+      url: `https://podcasters.spotify.com/pod/show/go-ito/episodes/episode-${index}`,
+      imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/${index}.jpg`,
+    })),
+  });
+
+  assert.match(copy.narration, /排尿ケアが人生を変える/);
+  assert.doesNotMatch(copy.narration, /尊厳を守るADL支援の実践/);
+  assert.ok(copy.postCaption.includes(longTitle));
+});
+
 test("rejects malformed periods, prototype channels, injection, claims, and unsafe URLs", () => {
   assert.throws(() => buildCopy({ ...manifest, channel: "constructor" }));
   assert.throws(() => buildCopy({ ...manifest, period: { ...manifest.period, endDate: "2026-06-29" } }));
