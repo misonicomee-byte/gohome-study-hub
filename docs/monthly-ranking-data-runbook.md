@@ -4,11 +4,11 @@
 
 ## 現在の本番状態と切り替え方
 
-- GAS本番は現在version 63です。version 61で発見した既存ポータルの`days=180`互換問題は、`src/data/portal.ts`から明示的な`startDate`と`endDate`を送る修正で解消済みです。
+- 内部ダッシュボードGAS本番は現在version 64で、Googleログイン必須へ戻しています。version 61で発見した既存ポータルの`days=180`互換問題は、`src/data/portal.ts`から明示的な`startDate`と`endDate`を送る修正で解消済みです。
 - 次回は新しいdeploymentを作らず、既存のproduction deployment IDを更新します。これによりWeb App URLを変えません。
-- `src/data/portal.ts`を含むサイト側互換修正と、同じdeployment IDを使ったGAS version 63への更新は完了しています。サイトを再ビルドした後もendpoint確認までを一続きの作業として扱います。
-- `appsscript.json`の設定だけを根拠に公開済みと判断しません。version 63では未ログインの外部クライアントからブログ、Instagram投稿、Instagram月次rankingのJSON応答を確認済みです。再デプロイ時も、同じdeployment IDと匿名アクセスを実測してください。
-- 問題があれば、同じdeployment IDとURLを保ったままversion 60へ戻します。
+- `src/data/portal.ts`を含むサイト側互換修正は完了しています。ただし、内部ダッシュボードと同じGASを匿名公開してはいけません。管理用server functionと秘密値へ到達できる範囲が広がるためです。
+- 公開ランキングJSONは、管理用関数を含まない別の最小GAS project/deploymentへ分離します。分離完了までは、外部ポータルと月次CLIからこの内部deploymentを利用しません。
+- 問題があれば、同じ内部deployment IDとURLを保ったままversion 64へ戻します。version 60は明示日付parameterと互換でないため、現行ポータルのrollback先にはしません。
 
 ```bash
 cd gas/content-analytics
@@ -16,11 +16,11 @@ clasp push
 clasp version "monthly ranking exact ranges"
 clasp deploy -i '<same-production-deployment-id>' -V '<reviewed-version>' -d 'monthly ranking exact ranges'
 
-# 緊急ロールバック
-clasp deploy -i '<same-production-deployment-id>' -V 60 -d 'rollback monthly ranking'
+# 内部ダッシュボードの緊急ロールバック
+clasp deploy -i '<same-production-deployment-id>' -V 64 -d 'security rollback: authenticated dashboard only'
 ```
 
-`clasp`の成功表示だけでは公開アクセスを証明できません。deployment ID、version、既存Web App URL、公開アクセスを運用者が画面で照合してください。
+`clasp`の成功表示だけではアクセス制御を証明できません。内部ダッシュボードはログイン必須、公開JSONは別projectの匿名endpointであることを外部クライアントから実測してください。
 
 ## 必要な設定名
 
@@ -96,7 +96,7 @@ refresh token方式では`YOUTUBE_ACCESS_TOKEN`を設定せず、`YOUTUBE_REFRES
 2. transientなnetwork/OAuth失敗はcredential状態を安全な場所で確認し、同じcommandを再実行します。失敗runは最終symlinkを作りません。
 3. `--out`が既に存在する場合は上書きせず、別の未使用出力名で再収集します。旧出力を削除・差し替える前に新出力を検証してください。
 4. Instagram exactでboundary不足なら、fallback manifestのlabelと`rankingMode`を確認します。既知理由以外のpartial/errorはretryでごまかさず、GAS実行履歴とsnapshot sheetを調べます。
-5. GAS切り替え後にポータルのブログが空、HTML、または期間不整合になった場合は同じdeployment IDをversion 60へ戻し、原因を直してから再試行します。
+5. GAS切り替え後にポータルのブログが空、HTML、または期間不整合になった場合は公開JSON deploymentを停止し、内部ダッシュボードはversion 64のログイン必須を維持したまま原因を直します。
 
 ## 本番cross-check
 
@@ -119,4 +119,4 @@ git diff --check
 gitleaks git --redact --no-banner
 ```
 
-最後に、productionが意図したversion、同じWeb App URL、公開アクセス、ブログの明示期間、Instagramの`views`、月次endpointのexact/fallback表示を運用者が確認してから完了とします。
+最後に、内部ダッシュボードがログイン必須であること、公開JSONが別projectであること、ブログの明示期間、Instagramの`views`、月次endpointのexact/fallback表示を運用者が確認してから完了とします。
