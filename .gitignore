@@ -8,6 +8,7 @@ output/
 
 # dependencies
 node_modules/
+.worktrees/
 
 # logs
 npm-debug.log*
