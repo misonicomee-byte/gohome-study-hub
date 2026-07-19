@@ -1,0 +1,842 @@
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+// ===== STATE =====
+var dashboardData = null;
+var charts = {};
+var CONFIG_DAILY_BUDGET = 2000;
+var requestSeq = 0; // request sequence counter to handle race conditions
+
+// ===== INITIALIZATION =====
+document.addEventListener('DOMContentLoaded', function() {
+  initDatePickers();
+  loadDashboard();
+});
+
+function initDatePickers() {
+  var today = new Date();
+  var endStr = formatDateLocal(today);
+  var startObj = new Date(today);
+  startObj.setDate(startObj.getDate() - 90);
+  var startStr = formatDateLocal(startObj);
+
+  document.getElementById('start-date').value = startStr;
+  document.getElementById('end-date').value = endStr;
+  document.getElementById('end-date').max = endStr;
+  highlightPreset(90);
+}
+
+function formatDateLocal(d) {
+  var y = d.getFullYear();
+  var m = ('0' + (d.getMonth() + 1)).slice(-2);
+  var day = ('0' + d.getDate()).slice(-2);
+  return y + '-' + m + '-' + day;
+}
+
+function getSelectedDates() {
+  var s = document.getElementById('start-date').value;
+  var e = document.getElementById('end-date').value;
+  return { start: s || null, end: e || null };
+}
+
+function setPreset(days) {
+  var today = new Date();
+  var endStr = formatDateLocal(today);
+  var startObj = new Date(today);
+  startObj.setDate(startObj.getDate() - days);
+  var startStr = formatDateLocal(startObj);
+
+  document.getElementById('start-date').value = startStr;
+  document.getElementById('end-date').value = endStr;
+  highlightPreset(days);
+  applyDateRange();
+}
+
+function highlightPreset(days) {
+  document.querySelectorAll('.preset-btn').forEach(function(btn) {
+    var d = parseInt(btn.textContent);
+    btn.classList.toggle('active', d === days);
+  });
+}
+
+function applyDateRange() {
+  var startVal = document.getElementById('start-date').value;
+  var endVal = document.getElementById('end-date').value;
+  if (!startVal || !endVal) {
+    alert('日付が未選択です');
+    return;
+  }
+  if (startVal > endVal) {
+    alert('開始日は終了日より前にしてください');
+    return;
+  }
+  highlightPreset(0);
+  fetchDashboard(true, startVal, endVal);
+}
+
+function loadDashboard() {
+  fetchDashboard(false, null, null);
+}
+
+function fetchDashboard(forceRefresh, startDate, endDate) {
+  requestSeq++;
+  var mySeq = requestSeq;
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(function(data) {
+      if (mySeq !== requestSeq) return; // stale response, ignore
+      dashboardData = data;
+      renderAll();
+      showLoading(false);
+    })
+    .withFailureHandler(function(error) {
+      if (mySeq !== requestSeq) return;
+      showLoading(false);
+      alert('データ取得エラー: ' + error.message);
+    })
+    .getAllDashboardData(forceRefresh, startDate, endDate);
+}
+
+function refreshData() {
+  var dates = getSelectedDates();
+  var btn = document.querySelector('.refresh-btn');
+  btn.classList.add('loading');
+  btn.textContent = '更新中...';
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      dashboardData = data;
+      renderAll();
+      btn.classList.remove('loading');
+      btn.textContent = 'データ更新';
+    })
+    .withFailureHandler(function(error) {
+      btn.classList.remove('loading');
+      btn.textContent = 'データ更新';
+      alert('更新エラー: ' + error.message);
+    })
+    .getAllDashboardData(true, dates.start, dates.end);
+}
+
+function runDebugFormEvents() {
+  var dates = getSelectedDates();
+  var btn = document.getElementById('debug-btn');
+  if (btn) { btn.textContent = '実行中...'; btn.disabled = true; }
+
+  google.script.run
+    .withSuccessHandler(function(text) {
+      if (btn) { btn.textContent = 'デバッグ'; btn.disabled = false; }
+      var modal = document.createElement('div');
+      modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+      modal.onclick = function(e) { if (e.target === modal) document.body.removeChild(modal); };
+      var box = document.createElement('div');
+      box.style.cssText = 'background:#1E293B;color:#E2E8F0;padding:24px;border-radius:12px;max-width:800px;max-height:80vh;overflow:auto;font-family:monospace;font-size:13px;white-space:pre-wrap;line-height:1.5;';
+      box.textContent = text;
+      modal.appendChild(box);
+      document.body.appendChild(modal);
+    })
+    .withFailureHandler(function(error) {
+      if (btn) { btn.textContent = 'デバッグ'; btn.disabled = false; }
+      alert('デバッグエラー: ' + error.message);
+    })
+    .debugFormEvents(dates.start, dates.end);
+}
+
+function showLoading(show) {
+  const el = document.getElementById('loading-overlay');
+  el.style.display = show ? 'flex' : 'none';
+}
+
+// ===== TAB SWITCHING =====
+function switchTab(tabId) {
+  document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+
+  document.querySelector('[data-tab="' + tabId + '"]').classList.add('active');
+  document.getElementById('tab-' + tabId).classList.add('active');
+}
+
+// ===== RENDER ALL =====
+function renderAll() {
+  if (!dashboardData) return;
+
+  renderSummaryTab();
+  renderFunnelTab();
+  renderPostsTab();
+  renderRankingTab();
+  renderTrendTab();
+  renderInsightsTab();
+
+  // Sync date pickers with returned period
+  if (dashboardData.period) {
+    document.getElementById('start-date').value = dashboardData.period.startDate;
+    document.getElementById('end-date').value = dashboardData.period.endDate;
+  }
+}
+
+// ===== TAB 1: SUMMARY =====
+function renderSummaryTab() {
+  const s = dashboardData.summary;
+  const t = s.totals || {};
+  const raw = s.rawFormTotals || {};
+
+  document.getElementById('total-sessions').textContent = formatNumber(t.sessions);
+  document.getElementById('total-users').textContent = formatNumber(t.totalUsers);
+  document.getElementById('total-cta').textContent = formatNumber(raw.ctaPageViews || t.ctaPageViews);
+  document.getElementById('total-cv').textContent = formatNumber(raw.totalConversions || t.totalConversions || t.formSubmissions);
+
+  // First Touch CV
+  var ft = s.firstTouchTotals || {};
+  var ftCvEl = document.getElementById('total-ft-cv');
+  if (ftCvEl) {
+    ftCvEl.textContent = formatNumber(ft.totalConversions || 0);
+  }
+
+  // CPA & Spend cards
+  var spendEl = document.getElementById('total-spend');
+  var cpaEl = document.getElementById('total-cpa');
+  var spendSubEl = document.getElementById('spend-sub');
+  var cpaSubEl = document.getElementById('cpa-sub');
+  if (spendEl) {
+    if (s.adSpendAvailable) {
+      spendEl.textContent = '¥' + formatNumber(Math.round(s.totalSpend));
+    } else {
+      spendEl.textContent = '-';
+    }
+  }
+  if (spendSubEl && s.adSpendEstimated) {
+    spendSubEl.textContent = '概算（日予算 ¥' + formatNumber(CONFIG_DAILY_BUDGET || 2000) + ' × 日数）';
+  }
+  if (cpaEl) {
+    if (s.firstTouchCPA !== null) {
+      cpaEl.textContent = '¥' + formatNumber(s.firstTouchCPA);
+      if (cpaSubEl) cpaSubEl.textContent = '広告費用 ÷ 広告起点CV';
+    } else if (s.totalCPA !== null) {
+      cpaEl.textContent = '¥' + formatNumber(s.totalCPA);
+      if (cpaSubEl) cpaSubEl.textContent = '広告費用 ÷ 全CV';
+    } else {
+      cpaEl.textContent = '-';
+    }
+  }
+
+  // UTM warning
+  const warningEl = document.getElementById('utm-warning');
+  if (warningEl) {
+    warningEl.style.display = s.utmConfigured ? 'none' : 'block';
+  }
+
+  // Campaign table
+  renderCampaignTable(s.campaigns || []);
+
+  // All traffic summary
+  renderAllTrafficTable();
+}
+
+function renderCampaignTable(campaigns) {
+  const tbody = document.getElementById('campaign-tbody');
+  if (!tbody) return;
+
+  if (campaigns.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:32px;">Instagram広告キャンペーンデータがありません。UTMパラメータ設定後にデータが蓄積されます。</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = campaigns.map(function(c) {
+    return '<tr>' +
+      '<td><strong>' + escapeHtml(c.name) + '</strong></td>' +
+      '<td class="num">' + formatNumber(c.sessions) + '</td>' +
+      '<td class="num">' + formatNumber(c.totalUsers) + '</td>' +
+      '<td class="num">' + c.bounceRate + '%</td>' +
+      '<td class="num">' + formatDuration(c.avgDurationSec) + '</td>' +
+      '<td class="num">' + formatNumber(c.pageViews) + '</td>' +
+      '<td class="num">' + formatNumber(c.ctaPageViews) + '</td>' +
+      '<td class="num">' + formatNumber(c.formSubmissions) + '</td>' +
+      '<td class="num"><strong>' + formatNumber(c.score) + '</strong></td>' +
+      '</tr>';
+  }).join('');
+}
+
+function renderAllTrafficTable() {
+  const tbody = document.getElementById('traffic-tbody');
+  if (!tbody || !dashboardData.allTraffic) return;
+
+  const rows = dashboardData.allTraffic.rows || [];
+  if (rows.length === 0) return;
+
+  // Aggregate by channel group
+  const channelMap = {};
+  rows.forEach(function(r) {
+    const group = r.channelGroup || 'Other';
+    if (!channelMap[group]) {
+      channelMap[group] = { sessions: 0, totalUsers: 0, engagement: 0 };
+    }
+    channelMap[group].sessions += r.sessions || 0;
+    channelMap[group].totalUsers += r.totalUsers || 0;
+  });
+
+  const channels = Object.entries(channelMap)
+    .map(function(entry) { return { name: entry[0], data: entry[1] }; })
+    .sort(function(a, b) { return b.data.sessions - a.data.sessions; });
+
+  tbody.innerHTML = channels.map(function(ch) {
+    const highlight = (ch.name === 'Organic Social' || ch.name === 'Paid Social')
+      ? ' style="background:#FEF3C7;"' : '';
+    return '<tr' + highlight + '>' +
+      '<td><strong>' + escapeHtml(ch.name) + '</strong></td>' +
+      '<td class="num">' + formatNumber(ch.data.sessions) + '</td>' +
+      '<td class="num">' + formatNumber(ch.data.totalUsers) + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+// ===== TAB 2: FUNNEL =====
+function renderFunnelTab() {
+  var s = dashboardData.summary;
+  var totals = s.totals || {};
+  var raw = s.rawFormTotals || {};
+  var paid = s.paidTotals || {};
+  var organic = s.organicTotals || {};
+
+  // Meta Ads funnel metrics
+  var adImpressions = s.totalAdImpressions || 0;
+  var adLinkClicks = s.totalAdLinkClicks || 0;
+  var adUniqueLinkClicks = s.totalAdUniqueLinkClicks || 0;
+
+  // Instagram-attributed (campaign matched)
+  var hpSessions = totals.sessions || 0;
+  // Use raw totals from recruiting site (all sources) for funnel steps
+  // because cross-property UTM attribution is often incomplete
+  var ctaViews = raw.ctaPageViews || totals.ctaPageViews || 0;
+  var formStarts = raw.formStarts || totals.formStarts || 0;
+  var formSubmit = raw.formSubmissions || totals.formSubmissions || 0;
+  var telCV = raw.telConversions || totals.telConversions || 0;
+
+  // Attributed counts for comparison (session-based)
+  var attrCtaViews = totals.ctaPageViews || 0;
+  var attrFormStarts = totals.formStarts || 0;
+  var attrFormSubmit = totals.formSubmissions || 0;
+  var attrTelCV = totals.telConversions || 0;
+
+  // First Touch counts (user's initial visit was IG/paid)
+  var ft = s.firstTouchTotals || {};
+  var ftFormStarts = ft.formStarts || 0;
+  var ftFormSubmit = ft.formSubmissions || 0;
+  var ftTelCV = ft.telConversions || 0;
+  var ftTotalCV = ft.totalConversions || 0;
+
+  // Build two segments with independent scaling
+  var metaSteps = [];
+  var ga4Steps = [];
+
+  // Segment 1: Meta Ads (impressions, link clicks)
+  if (adImpressions > 0) {
+    metaSteps.push({ label: '\u5E83\u544A\u30A4\u30F3\u30D7\u30EC\u30C3\u30B7\u30E7\u30F3', value: adImpressions, color: '#E1306C', paid: adImpressions, organic: 0, metaOnly: true });
+    metaSteps.push({ label: '\u5E83\u544A\u30EA\u30F3\u30AF\u30AF\u30EA\u30C3\u30AF (UU)', value: adUniqueLinkClicks || adLinkClicks, color: '#833AB4', paid: adUniqueLinkClicks || adLinkClicks, organic: 0, metaOnly: true, totalClicks: adLinkClicks, uniqueClicks: adUniqueLinkClicks });
+  }
+
+  // Segment 2: GA4 conversion funnel
+  ga4Steps.push({ label: 'HP \u30BB\u30C3\u30B7\u30E7\u30F3', value: hpSessions, color: '#4F46E5', paid: paid.sessions || 0, organic: organic.sessions || 0 });
+  ga4Steps.push({ label: 'CTA\u30DA\u30FC\u30B8\u95B2\u89A7', value: ctaViews, color: '#6366F1', crossProperty: true, attributed: attrCtaViews });
+  ga4Steps.push({ label: '\u30D5\u30A9\u30FC\u30E0\u958B\u59CB', value: formStarts, color: '#7C3AED', crossProperty: true, attributed: attrFormStarts, firstTouch: ftFormStarts });
+  ga4Steps.push({ label: '\u30D5\u30A9\u30FC\u30E0\u5B8C\u4E86', value: formSubmit, color: '#10B981', crossProperty: true, attributed: attrFormSubmit, firstTouch: ftFormSubmit });
+  if (telCV > 0) {
+    ga4Steps.push({ label: '\u96FB\u8A71CV', value: telCV, color: '#F59E0B', crossProperty: true, attributed: attrTelCV, firstTouch: ftTelCV });
+  }
+
+  // Independent max values per segment (minimum bar width 8%)
+  var MIN_BAR_PCT = 8;
+  var metaMax = Math.max.apply(null, metaSteps.map(function(st) { return st.value; })) || 1;
+  var ga4Max = Math.max.apply(null, ga4Steps.map(function(st) { return st.value; })) || 1;
+
+  var container = document.getElementById('funnel-container');
+  if (!container) return;
+
+  // Helper: render a single funnel step
+  function renderStep(step, prevStep, segmentMax) {
+    var rawPct = (step.value / segmentMax) * 100;
+    var pct = Math.max(rawPct, step.value > 0 ? MIN_BAR_PCT : 0);
+
+    // Rate calculation
+    var rate = '';
+    if (prevStep && prevStep.value > 0) {
+      rate = ((step.value / prevStep.value) * 100).toFixed(1) + '%';
+    } else {
+      rate = '-';
+    }
+
+    // Label for rate between steps
+    var rateLabel = '';
+    if (prevStep) {
+      if (prevStep.label === '\u5E83\u544A\u30A4\u30F3\u30D7\u30EC\u30C3\u30B7\u30E7\u30F3') {
+        rateLabel = 'CTR ';
+      }
+    }
+    var arrow = prevStep ? '<div style="text-align:center;color:var(--text-secondary);font-size:12px;margin:-4px 0;">&#x25BC; ' + rateLabel + rate + '</div>' : '';
+
+    // Breakdown line (paid | organic)
+    var breakdownHtml = '';
+    var hasSplit = !step.metaOnly && !step.crossProperty && (step.paid > 0 || step.organic > 0);
+    if (hasSplit) {
+      breakdownHtml = '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">' +
+        '<span style="color:#E1306C;font-weight:500;">&#x25A0; \u5E83\u544A: ' + formatNumber(step.paid) + '</span>' +
+        '<span style="margin:0 6px;">|</span>' +
+        '<span style="color:#4F46E5;font-weight:500;">&#x25A0; \u30AA\u30FC\u30AC\u30CB\u30C3\u30AF: ' + formatNumber(step.organic) + '</span>' +
+      '</div>';
+    } else if (step.crossProperty) {
+      var attrNote = '';
+      if (step.attributed !== undefined && step.attributed !== step.value) {
+        attrNote = ' | IG\u5E30\u5C5E: ' + formatNumber(step.attributed);
+      }
+      var ftNote = '';
+      if (step.firstTouch !== undefined && step.firstTouch > 0) {
+        ftNote = ' | \u521D\u56DE\u5E83\u544A\u7D4C\u7531: ' + formatNumber(step.firstTouch);
+      }
+      breakdownHtml = '<div style="font-size:10px;color:var(--text-secondary);margin-top:2px;opacity:0.7;">\u203B \u5168\u30BD\u30FC\u30B9\u5408\u8A08\uFF08\u63A1\u7528\u30B5\u30A4\u30C8\uFF09' + attrNote + ftNote + '</div>';
+    }
+
+    // Stacked bar or single bar
+    var barHtml = '';
+    if (hasSplit) {
+      var paidRaw = (step.paid / segmentMax) * 100;
+      var organicRaw = (step.organic / segmentMax) * 100;
+      var totalRaw = paidRaw + organicRaw;
+      // Scale up if below minimum
+      var scale = (totalRaw > 0 && totalRaw < MIN_BAR_PCT) ? MIN_BAR_PCT / totalRaw : 1;
+      var paidPct = paidRaw * scale;
+      var organicPct = organicRaw * scale;
+      if (step.paid > 0 && step.organic > 0) {
+        // Both paid and organic: stacked bar
+        barHtml = '<div class="step-bar">' +
+          '<div class="step-bar-fill" style="width:' + paidPct + '%;background:#E1306C;border-radius:8px 0 0 8px;"></div>' +
+          '<div class="step-bar-fill" style="width:' + organicPct + '%;background:' + step.color + ';opacity:0.6;border-radius:0 8px 8px 0;"></div>' +
+        '</div>';
+      } else if (step.paid > 0) {
+        // Paid only
+        barHtml = '<div class="step-bar"><div class="step-bar-fill" style="width:' + paidPct + '%;background:#E1306C;"></div></div>';
+      } else {
+        // Organic only: solid color
+        barHtml = '<div class="step-bar"><div class="step-bar-fill" style="width:' + organicPct + '%;background:' + step.color + ';"></div></div>';
+      }
+    } else {
+      barHtml = '<div class="step-bar"><div class="step-bar-fill" style="width:' + pct + '%;background:' + step.color + ';"></div></div>';
+    }
+
+    return arrow +
+      '<div class="funnel-step">' +
+        '<div class="step-label">' + step.label + '</div>' +
+        barHtml +
+        '<div class="step-value">' + formatNumber(step.value) + '</div>' +
+        breakdownHtml +
+      '</div>';
+  }
+
+  var html = '';
+
+  // Render Meta Ads segment
+  if (metaSteps.length > 0) {
+    html += '<div class="funnel-segment-label">\u5E83\u544A\u914D\u4FE1 <span style="font-weight:400;color:var(--text-secondary);">Meta Ads</span></div>';
+    metaSteps.forEach(function(step, i) {
+      html += renderStep(step, i > 0 ? metaSteps[i - 1] : null, metaMax);
+    });
+
+    // Segment divider with cross-step rate
+    var crossRate = '-';
+    if (metaSteps.length > 0 && ga4Steps.length > 0) {
+      var lastMeta = metaSteps[metaSteps.length - 1];
+      if (lastMeta.value > 0) {
+        crossRate = ((ga4Steps[0].value / lastMeta.value) * 100).toFixed(1) + '%';
+      }
+    }
+    html += '<div class="funnel-segment-divider">' +
+      '<div class="funnel-segment-divider-line"></div>' +
+      '<div class="funnel-segment-divider-rate">&#x25BC; ' + crossRate + '</div>' +
+      '<div class="funnel-segment-divider-line"></div>' +
+    '</div>';
+  }
+
+  // Render GA4 conversion segment
+  html += '<div class="funnel-segment-label">\u30B3\u30F3\u30D0\u30FC\u30B8\u30E7\u30F3 <span style="font-weight:400;color:var(--text-secondary);">GA4</span></div>';
+  ga4Steps.forEach(function(step, i) {
+    html += renderStep(step, i > 0 ? ga4Steps[i - 1] : null, ga4Max);
+  });
+
+  container.innerHTML = html;
+}
+
+// ===== TAB 3: POSTS =====
+function renderPostsTab() {
+  const posts = dashboardData.instagramPosts.data || [];
+  const mappings = dashboardData.mappings || [];
+  const campaigns = dashboardData.summary.campaigns || [];
+
+  const container = document.getElementById('posts-grid');
+  if (!container) return;
+
+  if (posts.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">&#x1F4F7;</div><p>Instagram投稿データがありません</p></div>';
+    return;
+  }
+
+  container.innerHTML = posts.map(function(post) {
+    // Find mapped campaign
+    const mapping = mappings.find(function(m) { return m.post_id === post.id; });
+    const campaignData = mapping
+      ? campaigns.find(function(c) { return c.name === mapping.campaign_name; })
+      : null;
+
+    const imgSrc = post.thumbnail_url || post.media_url || '';
+    const mediaIcon = post.media_type === 'VIDEO' ? '&#x1F3AC;' : post.media_type === 'CAROUSEL_ALBUM' ? '&#x1F4DA;' : '&#x1F4F7;';
+
+    let ga4Section = '';
+    if (campaignData) {
+      ga4Section = '<div class="ga4-section">' +
+        '<div class="section-label">GA4 &#x2192; ' + escapeHtml(campaignData.name) + '</div>' +
+        '<div class="post-metrics">' +
+          '<div class="metric-item"><span class="metric-label">Session</span><span class="metric-value">' + formatNumber(campaignData.sessions) + '</span></div>' +
+          '<div class="metric-item"><span class="metric-label">CTA View</span><span class="metric-value">' + formatNumber(campaignData.ctaPageViews) + '</span></div>' +
+        '</div>' +
+      '</div>';
+    } else {
+      ga4Section = '<div class="ga4-section">' +
+        '<div class="section-label">GA4 &#x2192; 未紐付け</div>' +
+        '<div style="font-size:12px;color:var(--text-secondary);">&#x300C;&#x30E9;&#x30F3;&#x30AD;&#x30F3;&#x30B0;&#x300D;&#x30BF;&#x30D6;&#x3067;&#x7D10;&#x4ED8;&#x3051;&#x3067;&#x304D;&#x307E;&#x3059;</div>' +
+      '</div>';
+    }
+
+    return '<div class="post-card">' +
+      (imgSrc ? '<img class="post-image" src="' + imgSrc + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '') +
+      '<div class="post-body">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+          '<span style="font-size:11px;color:var(--text-secondary);">' + mediaIcon + ' ' + formatDate(post.timestamp) + '</span>' +
+          '<a href="' + (post.permalink || '#') + '" target="_blank" style="font-size:11px;color:var(--primary);text-decoration:none;">&#x1F517; Instagram</a>' +
+        '</div>' +
+        '<div class="post-caption">' + escapeHtml(post.caption || '') + '</div>' +
+        '<div class="post-metrics">' +
+          '<div class="metric-item"><span class="metric-label">&#x2764; Like</span><span class="metric-value">' + formatNumber(post.like_count) + '</span></div>' +
+          '<div class="metric-item"><span class="metric-label">&#x1F4AC; Comment</span><span class="metric-value">' + formatNumber(post.comments_count) + '</span></div>' +
+          '<div class="metric-item"><span class="metric-label">&#x1F4E4; Share</span><span class="metric-value">' + formatNumber(post.shares) + '</span></div>' +
+          '<div class="metric-item"><span class="metric-label">&#x1F516; Save</span><span class="metric-value">' + formatNumber(post.saved) + '</span></div>' +
+          '<div class="metric-item"><span class="metric-label">&#x1F441; Reach</span><span class="metric-value">' + formatNumber(post.reach) + '</span></div>' +
+          '<div class="metric-item"><span class="metric-label">&#x1F4CA; Impr.</span><span class="metric-value">' + formatNumber(post.impressions) + '</span></div>' +
+        '</div>' +
+        ga4Section +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ===== TAB 4: RANKING =====
+function renderRankingTab() {
+  const campaigns = dashboardData.summary.campaigns || [];
+
+  const tbody = document.getElementById('ranking-tbody');
+  if (!tbody) return;
+
+  if (campaigns.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-secondary);padding:32px;">ランキングデータがありません</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = campaigns.map(function(c, i) {
+    const rankClass = i < 3 ? ' rank-' + (i + 1) : '';
+    return '<tr>' +
+      '<td class="rank-num' + rankClass + '">' + (i + 1) + '</td>' +
+      '<td><strong>' + escapeHtml(c.name) + '</strong></td>' +
+      '<td class="num">' + formatNumber(c.sessions) + '</td>' +
+      '<td class="num">' + formatNumber(c.totalUsers) + '</td>' +
+      '<td class="num">' + formatNumber(c.ctaPageViews) + '</td>' +
+      '<td class="num">' + formatNumber(c.formSubmissions) + '</td>' +
+      '<td class="num">' + c.cvRate + '%</td>' +
+      '<td class="num"><strong>' + formatNumber(c.score) + '</strong></td>' +
+      '</tr>';
+  }).join('');
+
+  // Render effectiveness chart
+  renderEffectivenessChart(campaigns);
+}
+
+function renderEffectivenessChart(campaigns) {
+  const ctx = document.getElementById('effectiveness-chart');
+  if (!ctx) return;
+
+  if (charts.effectiveness) charts.effectiveness.destroy();
+
+  const top10 = campaigns.slice(0, 10);
+
+  charts.effectiveness = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top10.map(function(c) { return truncate(c.name, 15); }),
+      datasets: [
+        {
+          label: 'Session',
+          data: top10.map(function(c) { return c.sessions; }),
+          backgroundColor: 'rgba(79, 70, 229, 0.7)',
+        },
+        {
+          label: 'CTA View',
+          data: top10.map(function(c) { return c.ctaPageViews; }),
+          backgroundColor: 'rgba(124, 58, 237, 0.7)',
+        },
+        {
+          label: 'Form Submit',
+          data: top10.map(function(c) { return c.formSubmissions; }),
+          backgroundColor: 'rgba(16, 185, 129, 0.7)',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true, beginAtZero: true },
+      },
+    },
+  });
+}
+
+// ===== TAB 5: TREND =====
+function renderTrendTab() {
+  const trendRows = (dashboardData.trafficTrend || {}).rows || [];
+
+  if (trendRows.length === 0) {
+    const container = document.getElementById('trend-chart-container');
+    if (container) {
+      container.innerHTML = '<div class="empty-state"><p>トレンドデータがありません</p></div>';
+    }
+    return;
+  }
+
+  // Aggregate by week
+  const weeklyData = {};
+  trendRows.forEach(function(r) {
+    const dateStr = r.date;
+    const d = new Date(dateStr.substring(0,4), parseInt(dateStr.substring(4,6))-1, parseInt(dateStr.substring(6,8)));
+    const weekStart = new Date(d);
+    weekStart.setDate(d.getDate() - d.getDay());
+    const weekKey = Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric' }).format(weekStart) + '週';
+
+    if (!weeklyData[weekKey]) {
+      weeklyData[weekKey] = { sessions: 0, users: 0, pageViews: 0 };
+    }
+    weeklyData[weekKey].sessions += r.sessions || 0;
+    weeklyData[weekKey].users += r.totalUsers || 0;
+    weeklyData[weekKey].pageViews += r.screenPageViews || 0;
+  });
+
+  const labels = Object.keys(weeklyData);
+  const sessionsData = labels.map(function(k) { return weeklyData[k].sessions; });
+  const usersData = labels.map(function(k) { return weeklyData[k].users; });
+
+  const ctx = document.getElementById('trend-chart');
+  if (!ctx) return;
+
+  if (charts.trend) charts.trend.destroy();
+
+  charts.trend = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Session',
+          data: sessionsData,
+          borderColor: '#4F46E5',
+          backgroundColor: 'rgba(79,70,229,0.1)',
+          fill: true,
+          tension: 0.3,
+        },
+        {
+          label: 'User',
+          data: usersData,
+          borderColor: '#7C3AED',
+          backgroundColor: 'rgba(124,58,237,0.1)',
+          fill: true,
+          tension: 0.3,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'top' } },
+      scales: { y: { beginAtZero: true } },
+    },
+  });
+}
+
+// ===== TAB 6: INSIGHTS =====
+function renderInsightsTab() {
+  const s = dashboardData.summary;
+  const campaigns = s.campaigns || [];
+  const posts = dashboardData.instagramPosts.data || [];
+
+  const insightsContainer = document.getElementById('insights-container');
+  if (!insightsContainer) return;
+
+  let html = '';
+
+  // UTM Status
+  if (!s.utmConfigured) {
+    html += '<div class="insight-card">' +
+      '<h3>&#x26A0;&#xFE0F; UTMパラメータ未設定</h3>' +
+      '<p>Instagram広告のリンクにUTMパラメータが設定されていないため、GA4でPaid Socialトラフィックとして正しく識別されていません。</p>' +
+      '<p style="margin-top:12px;"><strong>対応方法:</strong></p>' +
+      '<ul>' +
+        '<li>Meta Ads Manager &#x2192; 広告 &#x2192; トラッキング &#x2192; URLパラメータ</li>' +
+        '<li>utm_source=instagram&amp;utm_medium=paid&amp;utm_campaign={{campaign.name}}&amp;utm_content={{ad.name}}</li>' +
+        '<li>設定後2-3日でGA4に「Paid Social」チャネルが出現します</li>' +
+      '</ul>' +
+    '</div>';
+  }
+
+  // Attribution gap analysis
+  var raw = s.rawFormTotals || {};
+  var attr = s.totals || {};
+  var hasGap = (raw.formStarts > 0 || raw.formSubmissions > 0) &&
+    (raw.formStarts > attr.formStarts || raw.formSubmissions > attr.formSubmissions);
+  if (hasGap) {
+    var attrRate = raw.totalConversions > 0
+      ? Math.round((attr.totalConversions / raw.totalConversions) * 100)
+      : 0;
+    html += '<div class="insight-card">' +
+      '<h3>&#x1F50D; \u30A2\u30C8\u30EA\u30D3\u30E5\u30FC\u30B7\u30E7\u30F3\u5206\u6790</h3>' +
+      '<p>\u63A1\u7528\u30B5\u30A4\u30C8\u5168\u4F53\u306E\u30D5\u30A9\u30FC\u30E0\u30C7\u30FC\u30BF\u3068Instagram\u5E30\u5C5E\u306E\u6BD4\u8F03:</p>' +
+      '<table style="width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;">' +
+      '<tr style="border-bottom:1px solid #e5e7eb;">' +
+        '<th style="text-align:left;padding:6px;"></th>' +
+        '<th style="text-align:right;padding:6px;">\u5168\u30BD\u30FC\u30B9</th>' +
+        '<th style="text-align:right;padding:6px;">IG\u5E30\u5C5E</th>' +
+        '<th style="text-align:right;padding:6px;">\u672A\u5E30\u5C5E</th>' +
+      '</tr>' +
+      '<tr style="border-bottom:1px solid #f3f4f6;">' +
+        '<td style="padding:6px;">CTA\u30DA\u30FC\u30B8\u95B2\u89A7</td>' +
+        '<td style="text-align:right;padding:6px;font-weight:600;">' + formatNumber(raw.ctaPageViews) + '</td>' +
+        '<td style="text-align:right;padding:6px;">' + formatNumber(attr.ctaPageViews) + '</td>' +
+        '<td style="text-align:right;padding:6px;color:#EF4444;">' + formatNumber(raw.ctaPageViews - attr.ctaPageViews) + '</td>' +
+      '</tr>' +
+      '<tr style="border-bottom:1px solid #f3f4f6;">' +
+        '<td style="padding:6px;">\u30D5\u30A9\u30FC\u30E0\u958B\u59CB</td>' +
+        '<td style="text-align:right;padding:6px;font-weight:600;">' + formatNumber(raw.formStarts) + '</td>' +
+        '<td style="text-align:right;padding:6px;">' + formatNumber(attr.formStarts) + '</td>' +
+        '<td style="text-align:right;padding:6px;color:#EF4444;">' + formatNumber(raw.formStarts - attr.formStarts) + '</td>' +
+      '</tr>' +
+      '<tr style="border-bottom:1px solid #f3f4f6;">' +
+        '<td style="padding:6px;">\u30D5\u30A9\u30FC\u30E0\u5B8C\u4E86</td>' +
+        '<td style="text-align:right;padding:6px;font-weight:600;">' + formatNumber(raw.formSubmissions) + '</td>' +
+        '<td style="text-align:right;padding:6px;">' + formatNumber(attr.formSubmissions) + '</td>' +
+        '<td style="text-align:right;padding:6px;color:#EF4444;">' + formatNumber(raw.formSubmissions - attr.formSubmissions) + '</td>' +
+      '</tr>' +
+      '<tr>' +
+        '<td style="padding:6px;">\u96FB\u8A71CV</td>' +
+        '<td style="text-align:right;padding:6px;font-weight:600;">' + formatNumber(raw.telConversions) + '</td>' +
+        '<td style="text-align:right;padding:6px;">' + formatNumber(attr.telConversions) + '</td>' +
+        '<td style="text-align:right;padding:6px;color:#EF4444;">' + formatNumber(raw.telConversions - attr.telConversions) + '</td>' +
+      '</tr>' +
+      '</table>' +
+      '<p style="font-size:12px;color:var(--text-secondary);">IG\u5E30\u5C5E\u7387: <strong>' + attrRate + '%</strong> \u2014 \u672A\u5E30\u5C5E\u5206\u306F\u4ED6\u30BD\u30FC\u30B9\uFF08\u691C\u7D22\u30FB\u76F4\u63A5\u7B49\uFF09\u304B\u3089\u306E\u6D41\u5165\u3001\u307E\u305F\u306FUTM\u30D1\u30E9\u30E1\u30FC\u30BF\u672A\u8A2D\u5B9A\u306E\u53EF\u80FD\u6027\u304C\u3042\u308A\u307E\u3059\u3002</p>' +
+    '</div>';
+  }
+
+  // Post analysis insights
+  if (posts.length > 0) {
+    // Best engagement post
+    const bestEngagement = posts.reduce(function(best, p) {
+      const eng = (p.like_count || 0) + (p.comments_count || 0) + (p.shares || 0) + (p.saved || 0);
+      const bestEng = (best.like_count || 0) + (best.comments_count || 0) + (best.shares || 0) + (best.saved || 0);
+      return eng > bestEng ? p : best;
+    }, posts[0]);
+
+    const bestReach = posts.reduce(function(best, p) {
+      return (p.reach || 0) > (best.reach || 0) ? p : best;
+    }, posts[0]);
+
+    const bestSave = posts.reduce(function(best, p) {
+      return (p.saved || 0) > (best.saved || 0) ? p : best;
+    }, posts[0]);
+
+    html += '<div class="insight-card">' +
+      '<h3>&#x1F3C6; 投稿パフォーマンスTOP</h3>' +
+      '<ul>' +
+        '<li><strong>最高エンゲージメント:</strong> ' + escapeHtml((bestEngagement.caption || '').substring(0, 60)) + '...</li>' +
+        '<li><strong>最高リーチ:</strong> ' + formatNumber(bestReach.reach) + ' (' + escapeHtml((bestReach.caption || '').substring(0, 40)) + '...)</li>' +
+        '<li><strong>最高保存数:</strong> ' + formatNumber(bestSave.saved) + ' (' + escapeHtml((bestSave.caption || '').substring(0, 40)) + '...)</li>' +
+      '</ul>' +
+    '</div>';
+
+    // Media type analysis
+    const typeStats = {};
+    posts.forEach(function(p) {
+      const t = p.media_type || 'UNKNOWN';
+      if (!typeStats[t]) typeStats[t] = { count: 0, totalReach: 0, totalEng: 0 };
+      typeStats[t].count++;
+      typeStats[t].totalReach += p.reach || 0;
+      typeStats[t].totalEng += (p.like_count || 0) + (p.comments_count || 0) + (p.shares || 0) + (p.saved || 0);
+    });
+
+    html += '<div class="insight-card">' +
+      '<h3>&#x1F4CA; 投稿タイプ別分析</h3>' +
+      '<ul>' +
+      Object.entries(typeStats).map(function(entry) {
+        const typeName = entry[0] === 'IMAGE' ? '画像' : entry[0] === 'VIDEO' ? '動画' : entry[0] === 'CAROUSEL_ALBUM' ? 'カルーセル' : entry[0];
+        const avgReach = Math.round(entry[1].totalReach / entry[1].count);
+        const avgEng = Math.round(entry[1].totalEng / entry[1].count);
+        return '<li>' + typeName + ': ' + entry[1].count + '件 | 平均リーチ: ' + formatNumber(avgReach) + ' | 平均エンゲージメント: ' + formatNumber(avgEng) + '</li>';
+      }).join('') +
+      '</ul>' +
+    '</div>';
+  }
+
+  // Campaign insights
+  if (campaigns.length > 0) {
+    const bestCampaign = campaigns[0];
+    html += '<div class="insight-card">' +
+      '<h3>&#x1F4A1; 戦略的推奨</h3>' +
+      '<ul>' +
+        '<li><strong>最も効果的なキャンペーン:</strong> ' + escapeHtml(bestCampaign.name) + ' (スコア: ' + formatNumber(bestCampaign.score) + ')</li>' +
+        '<li><strong>CTA到達率:</strong> ' + bestCampaign.ctaRate + '% (セッション中CTAページを閲覧した割合)</li>';
+
+    if (bestCampaign.cvRate > 0) {
+      html += '<li><strong>CV率:</strong> ' + bestCampaign.cvRate + '% (応募フォーム送信率)</li>';
+    }
+
+    html += '</ul></div>';
+  }
+
+  if (html === '') {
+    html = '<div class="empty-state"><div class="icon">&#x1F50D;</div><p>分析データを蓄積中です。UTMパラメータ設定後、データが蓄積されるとインサイトが表示されます。</p></div>';
+  }
+
+  insightsContainer.innerHTML = html;
+}
+
+// ===== UTILITIES =====
+function formatNumber(n) {
+  if (n === null || n === undefined) return '0';
+  return Number(n).toLocaleString('ja-JP');
+}
+
+function formatDuration(seconds) {
+  if (!seconds) return '0:00';
+  const min = Math.floor(seconds / 60);
+  const sec = Math.round(seconds % 60);
+  return min + ':' + (sec < 10 ? '0' : '') + sec;
+}
+
+function formatDate(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  return (d.getMonth() + 1) + '/' + d.getDate();
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function truncate(str, len) {
+  if (!str) return '';
+  return str.length > len ? str.substring(0, len) + '...' : str;
+}
+</script>

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instagram広告戦略ダッシュボード</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <?!= include('styles') ?>
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay" class="loading-overlay">
+  <div class="spinner"></div>
+  <div class="loading-text">データを読み込み中...</div>
+</div>
+
+<!-- Header -->
+<header class="header">
+  <div class="header-content">
+    <h1>&#x1F4CA; Instagram広告戦略ダッシュボード</h1>
+    <div class="header-actions">
+      <div class="date-picker-group">
+        <input type="date" id="start-date" class="date-input" title="開始日">
+        <span class="date-separator">～</span>
+        <input type="date" id="end-date" class="date-input" title="終了日">
+        <button class="apply-date-btn" onclick="applyDateRange()">適用</button>
+        <button class="preset-btn" onclick="setPreset(30)">30日</button>
+        <button class="preset-btn" onclick="setPreset(90)">90日</button>
+        <button class="preset-btn" onclick="setPreset(180)">180日</button>
+      </div>
+      <button id="debug-btn" class="preset-btn" onclick="runDebugFormEvents()">デバッグ</button>
+      <button class="refresh-btn" onclick="refreshData()">データ更新</button>
+    </div>
+  </div>
+</header>
+
+<!-- Tabs -->
+<nav class="tabs">
+  <button class="tab active" data-tab="summary" onclick="switchTab('summary')">概要</button>
+  <button class="tab" data-tab="funnel" onclick="switchTab('funnel')">ファネル</button>
+  <button class="tab" data-tab="posts" onclick="switchTab('posts')">投稿分析</button>
+  <button class="tab" data-tab="ranking" onclick="switchTab('ranking')">ランキング</button>
+  <button class="tab" data-tab="trend" onclick="switchTab('trend')">トレンド</button>
+  <button class="tab" data-tab="insights" onclick="switchTab('insights')">インサイト</button>
+</nav>
+
+<main class="container">
+
+  <!-- TAB 1: Summary -->
+  <div id="tab-summary" class="tab-content active">
+
+    <!-- UTM Warning -->
+    <div id="utm-warning" class="alert alert-warning" style="display:none;">
+      <strong>&#x23F3; UTMデータ反映待ち</strong><br>
+      UTMパラメータは設定済みですが、GA4にPaid Socialデータがまだ蓄積されていません。広告クリック後、数時間〜翌日にはデータが反映されます。
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="label">セッション</div>
+        <div class="value" id="total-sessions">-</div>
+        <div class="sub">Instagram広告経由</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">ユーザー</div>
+        <div class="value" id="total-users">-</div>
+        <div class="sub">ユニークユーザー</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">CTA ページ閲覧</div>
+        <div class="value" id="total-cta">-</div>
+        <div class="sub">応募フォームページ</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">合計CV（全ソース）</div>
+        <div class="value" id="total-cv">-</div>
+        <div class="sub">フォーム + 電話</div>
+      </div>
+      <div class="summary-card" style="border-top:3px solid #833AB4;">
+        <div class="label">広告起点CV</div>
+        <div class="value" id="total-ft-cv" style="color:#833AB4;">-</div>
+        <div class="sub">初回訪問が広告だったCV</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">広告費用</div>
+        <div class="value" id="total-spend">-</div>
+        <div class="sub" id="spend-sub">Meta Ads合計</div>
+      </div>
+      <div class="summary-card" style="border-top:3px solid #10B981;">
+        <div class="label">応募単価 (CPA)</div>
+        <div class="value" id="total-cpa" style="color:#10B981;">-</div>
+        <div class="sub" id="cpa-sub">広告費用 ÷ 広告起点CV</div>
+      </div>
+    </div>
+
+    <!-- Campaign Table -->
+    <div class="table-card">
+      <div class="table-title">キャンペーン別パフォーマンス（過去90日）</div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>キャンペーン</th>
+              <th class="num">セッション</th>
+              <th class="num">ユーザー</th>
+              <th class="num">直帰率</th>
+              <th class="num">平均滞在</th>
+              <th class="num">PV</th>
+              <th class="num">CTA</th>
+              <th class="num">CV</th>
+              <th class="num">スコア</th>
+            </tr>
+          </thead>
+          <tbody id="campaign-tbody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- All Traffic (Reference) -->
+    <div class="table-card">
+      <div class="table-title">全トラフィックチャネル（参考・過去30日）</div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>チャネル</th>
+              <th class="num">セッション</th>
+              <th class="num">ユーザー</th>
+            </tr>
+          </thead>
+          <tbody id="traffic-tbody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: Funnel -->
+  <div id="tab-funnel" class="tab-content">
+    <div class="chart-card">
+      <div class="chart-title">広告ファネル分析</div>
+      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:24px;">
+        Instagram投稿 &#x2192; ホームページ訪問 &#x2192; CTAページ閲覧 &#x2192; フォーム送信 の転換率を可視化
+      </p>
+      <div id="funnel-container" class="funnel-container"></div>
+    </div>
+
+    <!-- Funnel Tips Section -->
+    <div style="margin-top:32px;">
+
+      <!-- STEP 1: IG → HP -->
+      <div class="tips-card" style="border-left:4px solid #E1306C;">
+        <div class="tips-card-header">
+          <div class="step-title" style="color:#E1306C;">STEP 1: Instagram &#x2192; ホームページ訪問（広告クリック率）</div>
+          <div class="step-benchmark">目安: リーチの <strong>1〜3%</strong> がクリックすれば良好。それ以下なら広告クリエイティブの改善が必要。</div>
+        </div>
+        <div class="tips-section">
+          <div class="tips-section-title">広告クリエイティブの改善</div>
+          <ul class="tips-list">
+            <li><strong>冒頭1秒で「誰向けか」を明示</strong><br><span class="tip-detail">「訪問診療の看護師さんへ」など、ターゲットに直接呼びかける。スクロールを止める最大の要因は「自分ごと」感</span></li>
+            <li><strong>リアルな職場の様子を見せる</strong><br><span class="tip-detail">スタッフの笑顔、訪問先での実際のケア風景、車内での移動シーンなど。ストック写真ではなく実写が反応率2〜3倍</span></li>
+            <li><strong>具体的な数字を入れる</strong><br><span class="tip-detail">「残業月5時間以下」「年間休日120日」「訪問件数1日5〜6件」など。曖昧な「働きやすい環境」より数字が刺さる</span></li>
+            <li><strong>動画は15秒以内</strong><br><span class="tip-detail">リールは冒頭3秒で離脱判定。「1日のスケジュール」「先輩の声」など短く区切ったシリーズが効果的</span></li>
+            <li><strong>カルーセルで情報を段階的に</strong><br><span class="tip-detail">1枚目:キャッチコピー &#x2192; 2枚目:待遇 &#x2192; 3枚目:1日の流れ &#x2192; 4枚目:スタッフの声 &#x2192; 5枚目:応募CTA</span></li>
+          </ul>
+          <div class="tips-section-title">ターゲティングの最適化</div>
+          <ul class="tips-list">
+            <li><strong>類似オーディエンス</strong><br><span class="tip-detail">既存スタッフのプロフィールに近いユーザーをターゲット。看護師資格保有者、訪問看護経験者</span></li>
+            <li><strong>地域設定</strong><br><span class="tip-detail">クリニック所在地から通勤圏内（車30分圏内など）に絞る。広すぎると無駄クリックが増加</span></li>
+            <li><strong>配信時間帯</strong><br><span class="tip-detail">看護師の閲覧が多い時間帯: 昼休み(12:00-13:00)、勤務後(20:00-23:00)に集中配信</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- STEP 2: HP → Form Start -->
+      <div class="tips-card" style="border-left:4px solid #4F46E5;">
+        <div class="tips-card-header">
+          <div class="step-title" style="color:#4F46E5;">STEP 2: ホームページ訪問 &#x2192; フォーム開始（ランディングページ）</div>
+          <div class="step-benchmark">目安: 訪問者の <strong>5〜15%</strong> がフォームを開始すれば良好。直帰率60%以上なら改善が急務。</div>
+        </div>
+        <div class="tips-section">
+          <div class="tips-section-title">ランディングページの導線改善</div>
+          <ul class="tips-list">
+            <li><strong>広告との一貫性</strong><br><span class="tip-detail">広告で「訪問看護師募集」と訴求したら、LPの見出しも同じ文言に。ギャップがあると即離脱</span></li>
+            <li><strong>ファーストビューにCTAボタン</strong><br><span class="tip-detail">スクロールせずに「説明会に申し込む」ボタンが見える位置に配置。スマホ画面の上半分に収める</span></li>
+            <li><strong>追従型CTAボタン</strong><br><span class="tip-detail">スクロールしても画面下部に固定表示される「応募する」ボタン。いつでもアクションできる状態に</span></li>
+          </ul>
+          <div class="tips-section-title">求職者の不安を解消するコンテンツ</div>
+          <ul class="tips-list">
+            <li><strong>「よくある質問」セクション</strong><br><span class="tip-detail">「訪問診療の経験がなくても大丈夫？」「オンコールの頻度は？」「1日の訪問件数は？」など。不安を先回りで解消</span></li>
+            <li><strong>スタッフインタビュー</strong><br><span class="tip-detail">「病棟から転職した理由」「訪問診療のやりがい」を実名・顔写真付きで。転職の不安に共感するストーリー</span></li>
+            <li><strong>1日のスケジュール例</strong><br><span class="tip-detail">9:00出勤 &#x2192; 9:30訪問1件目 &#x2192; ... &#x2192; 17:00退勤。「見える化」で具体的にイメージさせる</span></li>
+            <li><strong>待遇・福利厚生の明示</strong><br><span class="tip-detail">給与レンジ、賞与実績、休日数、有休取得率、研修制度を具体的に。曖昧な記載は不信感につながる</span></li>
+          </ul>
+          <div class="tips-section-title">ページパフォーマンス</div>
+          <ul class="tips-list">
+            <li><strong>モバイル表示速度</strong><br><span class="tip-detail">Instagram経由はほぼスマホ。3秒以上で53%が離脱。画像圧縮、不要なスクリプト削除</span></li>
+            <li><strong>スマホファーストデザイン</strong><br><span class="tip-detail">タップしやすいボタンサイズ(44px以上)、読みやすいフォントサイズ(16px以上)</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- STEP 3: Form Start → Form Complete -->
+      <div class="tips-card" style="border-left:4px solid #10B981;">
+        <div class="tips-card-header">
+          <div class="step-title" style="color:#10B981;">STEP 3: フォーム開始 &#x2192; フォーム完了（応募フォーム最適化）</div>
+          <div class="step-benchmark">目安: フォーム開始者の <strong>50%以上</strong> が完了すれば良好。それ以下ならフォームに離脱要因あり。</div>
+        </div>
+        <div class="tips-section">
+          <div class="tips-section-title">フォームの簡易化</div>
+          <ul class="tips-list">
+            <li><strong>入力項目は最小限に</strong><br><span class="tip-detail">初回は「名前」「電話番号」「希望連絡時間帯」の3項目で十分。志望動機や職務経歴は面談時でOK</span></li>
+            <li><strong>「説明会予約」というハードルの低いCTA</strong><br><span class="tip-detail">「応募」より「まずは話を聞いてみる」「オンライン説明会に参加」の方が心理的ハードルが低い</span></li>
+            <li><strong>入力補助</strong><br><span class="tip-detail">電話番号のハイフン自動挿入、住所の郵便番号自動補完、プルダウンでの選択肢提供</span></li>
+            <li><strong>進捗バー表示</strong><br><span class="tip-detail">「ステップ1/2」のように完了までの距離を見せる。終わりが見えると離脱率が下がる</span></li>
+          </ul>
+          <div class="tips-section-title">信頼性・安心感の付与</div>
+          <ul class="tips-list">
+            <li><strong>フォーム横に「個人情報の取り扱い」明示</strong><br><span class="tip-detail">「営業電話はしません」「情報は採用目的のみに使用」と明記</span></li>
+            <li><strong>「しつこい連絡はしません」の一文</strong><br><span class="tip-detail">求職者が最も恐れるのは「登録したら電話が鳴り止まない」。先回りで安心させる</span></li>
+            <li><strong>レスポンス目安の明示</strong><br><span class="tip-detail">「3営業日以内にご連絡します」と記載。放置される不安を解消</span></li>
+          </ul>
+          <div class="tips-section-title">電話CVの活用</div>
+          <ul class="tips-list">
+            <li><strong>「電話で相談する」ボタンを併設</strong><br><span class="tip-detail">フォーム入力が面倒な層向け。特に40代以上の看護師は電話を好む傾向</span></li>
+            <li><strong>受付時間を明記</strong><br><span class="tip-detail">「平日9:00-17:00 採用担当:○○」と具体的に</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Overall Strategy -->
+      <div class="tips-card" style="border-left:4px solid #F59E0B;">
+        <div class="tips-card-header">
+          <div class="step-title" style="color:#F59E0B;">全体戦略: 訪問診療クリニックの採用における重要指標</div>
+        </div>
+        <div class="tips-section">
+          <div class="tips-section-title">KPI目標値（採用広告の業界水準）</div>
+          <div class="kpi-grid">
+            <div class="kpi-item">
+              <div class="kpi-label">広告クリック率(CTR)</div>
+              <div class="kpi-value">0.8〜2.0%</div>
+            </div>
+            <div class="kpi-item">
+              <div class="kpi-label">LP&#x2192;フォーム開始率</div>
+              <div class="kpi-value">5〜15%</div>
+            </div>
+            <div class="kpi-item">
+              <div class="kpi-label">フォーム完了率</div>
+              <div class="kpi-value">50〜70%</div>
+            </div>
+            <div class="kpi-item">
+              <div class="kpi-label">応募単価(CPA)</div>
+              <div class="kpi-value">&#xA5;5,000〜15,000</div>
+            </div>
+          </div>
+          <div class="tips-section-title">コンテンツ戦略</div>
+          <ul class="tips-list">
+            <li><strong>投稿は「共感」&#x2192;「興味」&#x2192;「行動」の3段階</strong><br><span class="tip-detail">日常投稿で共感 &#x2192; 待遇・制度で興味 &#x2192; 説明会告知で行動</span></li>
+            <li><strong>週2〜3投稿を維持</strong><br><span class="tip-detail">日常風景(月)、スタッフ紹介(水)、制度・待遇(金)のローテーション</span></li>
+            <li><strong>ストーリーズで「中の人」感</strong><br><span class="tip-detail">朝の出勤風景、ランチ、退勤報告など。完璧すぎない日常が信頼につながる</span></li>
+            <li><strong>成功事例の横展開</strong><br><span class="tip-detail">高CVRの投稿タイプを特定し、同じフォーマットで量産。データに基づくPDCA</span></li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- TAB 3: Posts -->
+  <div id="tab-posts" class="tab-content">
+    <div style="margin-bottom:16px;">
+      <h2 style="font-size:18px;font-weight:700;">Instagram投稿一覧</h2>
+      <p style="font-size:13px;color:var(--text-secondary);">各投稿のエンゲージメントデータとGA4キャンペーンデータを表示</p>
+    </div>
+    <div id="posts-grid" class="posts-grid"></div>
+  </div>
+
+  <!-- TAB 4: Ranking -->
+  <div id="tab-ranking" class="tab-content">
+    <div class="two-col">
+      <div class="table-card">
+        <div class="table-title">効果ランキング</div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>キャンペーン</th>
+                <th class="num">Session</th>
+                <th class="num">User</th>
+                <th class="num">CTA</th>
+                <th class="num">CV</th>
+                <th class="num">CV%</th>
+                <th class="num">スコア</th>
+              </tr>
+            </thead>
+            <tbody id="ranking-tbody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title">キャンペーン効果比較</div>
+        <div class="chart-container">
+          <canvas id="effectiveness-chart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="alert alert-info" style="margin-top:16px;">
+      <strong>スコア算出方法:</strong> Session &#xD7; 1 + CTA View &#xD7; 3 + Form Submit &#xD7; 10
+    </div>
+  </div>
+
+  <!-- TAB 5: Trend -->
+  <div id="tab-trend" class="tab-content">
+    <div class="chart-card">
+      <div class="chart-title">Instagram広告トラフィック推移</div>
+      <div id="trend-chart-container" class="chart-container">
+        <canvas id="trend-chart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 6: Insights -->
+  <div id="tab-insights" class="tab-content">
+    <div style="margin-bottom:16px;">
+      <h2 style="font-size:18px;font-weight:700;">戦略的インサイト</h2>
+      <p style="font-size:13px;color:var(--text-secondary);">データに基づく分析と改善提案</p>
+    </div>
+    <div id="insights-container"></div>
+  </div>
+
+</main>
+
+<?!= include('scripts') ?>
+
+</body>
+</html>
