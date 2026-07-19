@@ -1,0 +1,273 @@
+from PIL import Image, ImageDraw, ImageFilter
+
+from .layout import load_font, safe_area
+from .motions import motion_state
+
+
+def fit_asset(image, canvas):
+    source = image.convert("RGB")
+    background = source.resize(canvas, Image.Resampling.LANCZOS).filter(
+        ImageFilter.GaussianBlur(round(28 * canvas[0] / 1080))
+    )
+    scale = min(canvas[0] / source.width, canvas[1] / source.height)
+    foreground = source.resize(
+        (round(source.width * scale), round(source.height * scale)),
+        Image.Resampling.LANCZOS,
+    )
+    background.paste(
+        foreground,
+        ((canvas[0] - foreground.width) // 2, (canvas[1] - foreground.height) // 2),
+    )
+    return background
+
+
+def semantic_lines(text, limit):
+    if limit < 1:
+        raise ValueError("line limit must be positive")
+    if len(text) <= limit:
+        return [text]
+    result = []
+    remaining = text
+    while len(remaining) > limit:
+        candidates = [remaining.rfind(mark, 0, limit + 1) + 1 for mark in "、。！？・ "]
+        cut = max(candidates)
+        if cut <= 0:
+            cut = limit
+        result.append(remaining[:cut])
+        remaining = remaining[cut:]
+    if remaining:
+        result.append(remaining)
+    if "".join(result) != text:
+        raise AssertionError("line wrapping must preserve the exact text")
+    return result
+
+
+def _scaled(value, canvas):
+    return round(value * min(canvas[0] / 1080, canvas[1] / 1920))
+
+
+def _multiline(draw, text, max_width, max_height, canvas, start_size, minimum_size=18):
+    size = _scaled(start_size, canvas)
+    minimum = _scaled(minimum_size, canvas)
+    while size >= minimum:
+        font = load_font(size)
+        limit = max(1, int(max_width / max(size, 1)))
+        rendered = "\n".join(semantic_lines(text, limit))
+        spacing = max(1, round(size * 0.18))
+        bounds = draw.multiline_textbbox((0, 0), rendered, font=font, spacing=spacing)
+        if bounds[2] - bounds[0] <= max_width and bounds[3] - bounds[1] <= max_height:
+            return rendered, font, spacing
+        size -= 2
+    font = load_font(minimum)
+    limit = max(1, int(max_width / max(minimum, 1)))
+    return "\n".join(semantic_lines(text, limit)), font, max(1, round(minimum * 0.18))
+
+
+def _metric_text(value):
+    if isinstance(value, int) or float(value).is_integer():
+        return f"{int(value):,}"
+    return f"{float(value):,.2f}".rstrip("0").rstrip(".")
+
+
+def render_rank_frame(manifest, item, asset, time, config):
+    del time
+    canvas = (config.width, config.height)
+    frame = fit_asset(asset, canvas).convert("RGBA")
+    left, _, right, bottom = safe_area(canvas)
+    panel_top = _scaled(1010, canvas)
+
+    overlay = Image.new("RGBA", canvas, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    overlay_draw.rounded_rectangle(
+        (left, panel_top, right, bottom),
+        radius=_scaled(42, canvas),
+        fill=(8, 18, 35, 220),
+        outline=(255, 255, 255, 46),
+        width=max(1, _scaled(2, canvas)),
+    )
+    frame = Image.alpha_composite(frame, overlay)
+    draw = ImageDraw.Draw(frame)
+
+    badge_left = left + _scaled(28, canvas)
+    badge_top = panel_top + _scaled(34, canvas)
+    badge_size = _scaled(116, canvas)
+    draw.ellipse(
+        (badge_left, badge_top, badge_left + badge_size, badge_top + badge_size),
+        fill=(238, 80, 72, 255),
+    )
+    rank_font = load_font(_scaled(56, canvas))
+    draw.text(
+        (badge_left + badge_size / 2, badge_top + badge_size / 2),
+        str(item.rank),
+        font=rank_font,
+        fill="white",
+        anchor="mm",
+    )
+
+    text_left = badge_left + badge_size + _scaled(26, canvas)
+    text_right = right - _scaled(28, canvas)
+    title_top = badge_top
+    title_height = _scaled(286, canvas)
+    if item.title:
+        rendered_title, title_font, spacing = _multiline(
+            draw,
+            item.title,
+            text_right - text_left,
+            title_height,
+            canvas,
+            62,
+        )
+        draw.multiline_text(
+            (text_left, title_top),
+            rendered_title,
+            font=title_font,
+            fill=(255, 255, 255, 255),
+            spacing=spacing,
+        )
+
+    label_y = panel_top + _scaled(382, canvas)
+    if manifest.ranking_label:
+        label_left = left + _scaled(34, canvas)
+        label_right = right - _scaled(34, canvas)
+        rendered_label, label_font, label_spacing = _multiline(
+            draw,
+            manifest.ranking_label,
+            label_right - label_left,
+            _scaled(150, canvas),
+            canvas,
+            36,
+            22,
+        )
+        draw.multiline_text(
+            (label_left, label_y),
+            rendered_label,
+            font=label_font,
+            fill=(207, 220, 238, 255),
+            spacing=label_spacing,
+        )
+
+    metric_font = load_font(_scaled(92, canvas))
+    draw.text(
+        (right - _scaled(34, canvas), bottom - _scaled(42, canvas)),
+        _metric_text(item.metric_value),
+        font=metric_font,
+        fill=(255, 215, 100, 255),
+        anchor="rs",
+    )
+    return frame.convert("RGB")
+
+
+def _text_mask(text, canvas, font_size=190):
+    mask = Image.new("L", canvas, 0)
+    if not text:
+        return mask
+    draw = ImageDraw.Draw(mask)
+    max_width = canvas[0] - _scaled(144, canvas)
+    rendered, font, spacing = _multiline(
+        draw,
+        text,
+        max_width,
+        canvas[1] // 2,
+        canvas,
+        font_size,
+        32,
+    )
+    bounds = draw.multiline_textbbox((0, 0), rendered, font=font, spacing=spacing)
+    x = (canvas[0] - (bounds[2] - bounds[0])) // 2 - bounds[0]
+    y = (canvas[1] - (bounds[3] - bounds[1])) // 2 - bounds[1]
+    draw.multiline_text((x, y), rendered, font=font, fill=255, spacing=spacing)
+    return mask
+
+
+def _scaled_center_mask(mask, scale):
+    canvas = mask.size
+    scaled_size = (max(1, round(canvas[0] * scale)), max(1, round(canvas[1] * scale)))
+    scaled = mask.resize(scaled_size, Image.Resampling.BICUBIC)
+    result = Image.new("L", canvas, 0)
+    result.paste(scaled, ((canvas[0] - scaled.width) // 2, (canvas[1] - scaled.height) // 2))
+    return result
+
+
+def _background_with_title(background, text):
+    titled = background.convert("RGBA")
+    mask = _text_mask(text, background.size, 150)
+    ink = Image.new("RGBA", background.size, (255, 255, 255, 235))
+    titled.alpha_composite(Image.composite(ink, Image.new("RGBA", background.size), mask))
+    return titled.convert("RGB")
+
+
+def _single_line_font(text, canvas):
+    size = _scaled(120, canvas)
+    minimum = _scaled(32, canvas)
+    scratch = ImageDraw.Draw(Image.new("L", canvas))
+    while size > minimum:
+        font = load_font(size)
+        if scratch.textlength(text, font=font) <= canvas[0] - _scaled(144, canvas):
+            return font
+        size -= 2
+    return load_font(minimum)
+
+
+def _letter_scatter(text, next_frame, background, progress, canvas):
+    state = motion_state("letter-scatter", progress, len(text))
+    reveal = 1 - state["opacity"]
+    result = Image.blend(background, next_frame, reveal).convert("RGBA")
+    if not text or state["opacity"] <= 0:
+        return result.convert("RGB")
+
+    font = _single_line_font(text, canvas)
+    scratch = ImageDraw.Draw(Image.new("L", canvas))
+    widths = [scratch.textlength(glyph, font=font) for glyph in text]
+    cursor = (canvas[0] - sum(widths)) / 2
+    center_y = canvas[1] / 2
+    for glyph, width, transform in zip(text, widths, state["glyphs"]):
+        bounds = scratch.textbbox((0, 0), glyph or " ", font=font)
+        glyph_width = max(1, bounds[2] - bounds[0] + _scaled(24, canvas))
+        glyph_height = max(1, bounds[3] - bounds[1] + _scaled(24, canvas))
+        layer = Image.new("RGBA", (glyph_width, glyph_height), (0, 0, 0, 0))
+        layer_draw = ImageDraw.Draw(layer)
+        alpha = round(255 * state["opacity"])
+        layer_draw.text(
+            (_scaled(12, canvas) - bounds[0], _scaled(12, canvas) - bounds[1]),
+            glyph,
+            font=font,
+            fill=(255, 255, 255, alpha),
+        )
+        scale = transform["scale"]
+        layer = layer.resize(
+            (max(1, round(layer.width * scale)), max(1, round(layer.height * scale))),
+            Image.Resampling.LANCZOS,
+        ).rotate(transform["rotation"], resample=Image.Resampling.BICUBIC, expand=True)
+        x = cursor + width / 2 + transform["x"] * canvas[0] * 0.28 - layer.width / 2
+        y = center_y + transform["y"] * canvas[1] * 0.12 - layer.height / 2
+        result.alpha_composite(layer, (round(x), round(y)))
+        cursor += width
+    return result.convert("RGB")
+
+
+def render_transition_frame(text, next_frame, background, progress, config):
+    canvas = (config.width, config.height)
+    next_image = next_frame.convert("RGB").resize(canvas, Image.Resampling.LANCZOS)
+    background_image = background.convert("RGB").resize(canvas, Image.Resampling.LANCZOS)
+
+    if config.motion == "cutout-zoom":
+        state = motion_state(config.motion, progress, len(text))
+        mask = _scaled_center_mask(_text_mask(text, canvas), state["scale"])
+        return Image.composite(next_image, background_image, mask)
+
+    if config.motion == "split-reveal":
+        state = motion_state(config.motion, progress, len(text))
+        titled = _background_with_title(background_image, text)
+        half = canvas[1] // 2
+        result = next_image.copy()
+        result.paste(titled.crop((0, 0, canvas[0], half)), (0, round(state["top_y"] * half)))
+        result.paste(
+            titled.crop((0, half, canvas[0], canvas[1])),
+            (0, half + round(state["bottom_y"] * (canvas[1] - half))),
+        )
+        return result
+
+    if config.motion == "letter-scatter":
+        return _letter_scatter(text, next_image, background_image, progress, canvas)
+
+    raise ValueError(f"unknown motion: {config.motion}")
