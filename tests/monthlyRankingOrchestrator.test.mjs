@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, mkdir, readFile, readdir, stat, utimes, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 
 import { buildCopy } from "../scripts/monthly-ranking-shorts/copy.mjs";
@@ -9,6 +11,7 @@ import {
   parseArgs,
   prepareChannelAssets,
   runMonthlyRanking,
+  selectScheduledChannel,
   validateHistoryDocument,
   writeProceduralBgm,
 } from "../scripts/monthly-ranking-shorts/orchestrate.mjs";
@@ -16,6 +19,18 @@ import {
 const CHANNELS = ["youtube", "blog", "instagram", "podcast"];
 const PNG = Buffer.from("89504e470d0a1a0a0000000049454e44ae426082", "hex");
 const PUBLIC_DNS = async () => [{ address: "93.184.216.34", family: 4 }];
+const execFileAsync = promisify(execFile);
+
+function workflowSelectScript(source) {
+  const start = source.indexOf("        run: |\n", source.indexOf("      - id: select"));
+  const end = source.indexOf("\n\n  render:", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  return source.slice(start + "        run: |\n".length, end)
+    .split("\n")
+    .map((line) => line.startsWith("          ") ? line.slice(10) : line)
+    .join("\n");
+}
 
 function manifest(channel, month = "2026-06") {
   const [year, monthNumber] = month.split("-").map(Number);
@@ -29,8 +44,15 @@ function manifest(channel, month = "2026-06") {
       endDate: `${month}-${String(endDay).padStart(2, "0")}`,
       timezone: "Asia/Tokyo",
     },
+    ...(["youtube", "podcast"].includes(channel) ? {
+      reportingTimezone: "America/Los_Angeles",
+    } : {}),
     rankingMetric: "views",
-    rankingLabel: channel === "podcast" ? `前月（${month}）中に増えたYouTube再生回数` : `${month}の閲覧数`,
+    rankingLabel: channel === "podcast"
+      ? `前月（${month}）増加再生数（YouTube Analytics・太平洋時間）`
+      : channel === "youtube"
+        ? `${month}の再生回数（YouTube Analytics・太平洋時間）`
+        : `${month}の閲覧数`,
     generatedAt: "2026-07-01T00:00:00+09:00",
     items: [1, 2, 3].map((rank) => ({
       rank,
@@ -43,6 +65,7 @@ function manifest(channel, month = "2026-06") {
           : `https://example.test/${channel}/${rank}`,
       ...(channel === "podcast" ? {
         imageUrl: `https://d3t3ozftmdmh3i.cloudfront.net/podcast-${rank}.jpg`,
+        episodeGuid: `podcast-guid-${rank}`,
       } : {}),
       publishedAt: `2026-06-0${rank}`,
       metricValue: 1000 - rank,
@@ -525,7 +548,84 @@ test("workflow is pilot-gated, selects one channel, and contains no publishing s
   assert.match(source, /youtube.*blog.*instagram.*podcast/s);
   assert.match(source, /--channel/);
   assert.match(source, /tar --dereference/);
-  assert.match(source, /第1.*YouTube|first.*youtube/i);
+  assert.match(source, /selectScheduledChannel/);
   assert.match(source, /第5.*予備|fifth.*skip/i);
   assert.doesNotMatch(source, /youtube.*upload|instagram.*publish|publishAttempt/i);
+});
+
+test("schedule delays Analytics-backed channels when the first Sunday is day 1 through 4", () => {
+  const delayed = [
+    [1, "instagram"], [8, "blog"], [15, "youtube"], [22, "podcast"], [29, "reserve"],
+    [4, "instagram"], [11, "blog"], [18, "youtube"], [25, "podcast"],
+  ];
+  for (const [day, channel] of delayed) {
+    assert.equal(selectScheduledChannel(day).channel, channel);
+  }
+  assert.equal(selectScheduledChannel(29).skip, true);
+});
+
+test("schedule keeps the standard order when the first Sunday is day 5 through 7", () => {
+  const standard = [
+    [5, "youtube"], [12, "blog"], [19, "instagram"], [26, "podcast"],
+    [7, "youtube"], [14, "blog"], [21, "instagram"], [28, "podcast"],
+  ];
+  for (const [day, channel] of standard) {
+    assert.equal(selectScheduledChannel(day).channel, channel);
+  }
+  assert.throws(() => selectScheduledChannel(0), /JST day/);
+  assert.throws(() => selectScheduledChannel(32), /JST day/);
+});
+
+test("workflow select shell executes schedule and manual paths with valid outputs", async () => {
+  const source = await readFile(path.join(import.meta.dirname, "../.github/workflows/monthly_ranking_shorts.yml"), "utf8");
+  const script = workflowSelectScript(source);
+  const root = await mkdtemp(path.join(tmpdir(), "ranking-workflow-select-"));
+  const fakeBin = path.join(root, "bin");
+  await mkdir(fakeBin);
+  const fakeDate = path.join(fakeBin, "date");
+  await writeFile(fakeDate, `#!/bin/sh
+if [ "$1" = "+%-d" ]; then
+  printf '%s\\n' "$TEST_JST_DAY"
+elif [ "$1" = "+%Y-%m-01" ]; then
+  printf '2026-07-01\\n'
+else
+  printf '2026-06\\n'
+fi
+`);
+  await chmod(fakeDate, 0o755);
+
+  for (const [day, expected] of [[1, "instagram"], [5, "youtube"], [29, "reserve"]]) {
+    const output = path.join(root, `schedule-${day}.txt`);
+    await execFileAsync("/bin/bash", ["-c", script], {
+      cwd: path.join(import.meta.dirname, ".."),
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        EVENT_NAME: "schedule",
+        INPUT_CHANNEL: "",
+        INPUT_MONTH: "",
+        GITHUB_OUTPUT: output,
+        TEST_JST_DAY: String(day),
+      },
+    });
+    const values = await readFile(output, "utf8");
+    assert.match(values, new RegExp(`^channel=${expected}$`, "m"));
+    assert.match(values, /^month=2026-06$/m);
+    assert.match(values, new RegExp(`^skip=${day === 29}$`, "m"));
+  }
+
+  const manualOutput = path.join(root, "manual.txt");
+  await execFileAsync("/bin/bash", ["-c", script], {
+    cwd: path.join(import.meta.dirname, ".."),
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}:${process.env.PATH}`,
+      EVENT_NAME: "workflow_dispatch",
+      INPUT_CHANNEL: "podcast",
+      INPUT_MONTH: "2026-06",
+      GITHUB_OUTPUT: manualOutput,
+      TEST_JST_DAY: "",
+    },
+  });
+  assert.equal(await readFile(manualOutput, "utf8"), "channel=podcast\nmonth=2026-06\nskip=false\n");
 });

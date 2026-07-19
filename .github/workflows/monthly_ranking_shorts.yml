@@ -31,6 +31,7 @@ jobs:
       month: ${{ steps.select.outputs.month }}
       skip: ${{ steps.select.outputs.skip }}
     steps:
+      - uses: actions/checkout@v4
       - id: select
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -44,20 +45,20 @@ jobs:
             skip=false
           else
             day="$(TZ=Asia/Tokyo date +%-d)"
-            week="$(( (day - 1) / 7 + 1 ))"
-            # 第1日曜 YouTube / 第2 blog / 第3 Instagram / 第4 podcast / 第5 予備でskip
-            case "$week" in
-              1) channel=youtube; skip=false ;;
-              2) channel=blog; skip=false ;;
-              3) channel=instagram; skip=false ;;
-              4) channel=podcast; skip=false ;;
-              5) channel=reserve; skip=true ;;
-              *) echo "unexpected JST week" >&2; exit 1 ;;
-            esac
+            # 第5日曜は予備でskip。第1日曜が1〜4日ならAnalytics媒体を後ろへ送る。
+            JST_DAY="$day" node --input-type=module <<'NODE'
+            import { appendFileSync } from "node:fs";
+            import { selectScheduledChannel } from "./scripts/monthly-ranking-shorts/orchestrate.mjs";
+            const selected = selectScheduledChannel(Number(process.env.JST_DAY));
+            appendFileSync(process.env.GITHUB_OUTPUT, `channel=${selected.channel}\nskip=${selected.skip}\n`);
+          NODE
             first_day="$(TZ=Asia/Tokyo date +%Y-%m-01)"
             month="$(TZ=Asia/Tokyo date -d "$first_day -1 month" +%Y-%m)"
+            printf 'month=%s\n' "$month" >> "$GITHUB_OUTPUT"
           fi
-          printf 'channel=%s\nmonth=%s\nskip=%s\n' "$channel" "$month" "$skip" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            printf 'channel=%s\nmonth=%s\nskip=%s\n' "$channel" "$month" "$skip" >> "$GITHUB_OUTPUT"
+          fi
 
   render:
     needs: select

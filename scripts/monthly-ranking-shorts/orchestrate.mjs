@@ -89,6 +89,19 @@ export function parseArgs(argv) {
   return result;
 }
 
+export function selectScheduledChannel(jstDay) {
+  if (!Number.isInteger(jstDay) || jstDay < 1 || jstDay > 31) {
+    throw new Error("JST day must be an integer from 1 through 31");
+  }
+  const week = Math.floor((jstDay - 1) / 7) + 1;
+  const firstSundayDay = jstDay - (week - 1) * 7;
+  if (week === 5) return { channel: "reserve", skip: true, week, firstSundayDay };
+  const order = firstSundayDay <= 4
+    ? ["instagram", "blog", "youtube", "podcast"]
+    : ["youtube", "blog", "instagram", "podcast"];
+  return { channel: order[week - 1], skip: false, week, firstSundayDay };
+}
+
 export function spawnChecked(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: "inherit", shell: false, ...options });

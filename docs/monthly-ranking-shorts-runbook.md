@@ -98,6 +98,18 @@ npm run ranking:shorts -- \
 
 週次scheduleは毎週日曜09:00 JSTに定義されていますが、pilot承認前は無効です。最終承認後にだけRepository variable `ENABLE_MONTHLY_RANKING_SCHEDULE=true` を設定して有効化します。
 
+YouTube Analyticsの月次値は対象月末後3完了日を待ち、`endDate + 4日 00:00 PT` から利用します。そのため、その月の第1日曜の日付に応じて順番を切り替えます。どちらも第1〜第4日曜に月4本を生成し、翌月曜日の手動アップロード方針は変わりません。
+
+第1日曜がJSTの1〜4日の場合:
+
+- 第1日曜: Instagram
+- 第2日曜: blog
+- 第3日曜: YouTube
+- 第4日曜: podcast
+- 第5日曜: 予備週としてskip
+
+第1日曜がJSTの5〜7日の場合:
+
 - 第1日曜: YouTube
 - 第2日曜: blog
 - 第3日曜: Instagram
