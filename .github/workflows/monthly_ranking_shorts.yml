@@ -1,0 +1,106 @@
+name: Monthly ranking Shorts drafts
+
+on:
+  schedule:
+    - cron: "0 0 * * 0" # Every Sunday at 09:00 JST; pilot guard is disabled by default.
+  workflow_dispatch:
+    inputs:
+      month:
+        description: Target completed month in YYYY-MM
+        required: true
+        type: string
+      channel:
+        description: Generate exactly one draft channel
+        required: true
+        type: choice
+        options:
+          - youtube
+          - blog
+          - instagram
+          - podcast
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_MONTHLY_RANKING_SCHEDULE == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.select.outputs.channel }}
+      month: ${{ steps.select.outputs.month }}
+      skip: ${{ steps.select.outputs.skip }}
+    steps:
+      - id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_MONTH: ${{ inputs.month }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            channel="$INPUT_CHANNEL"
+            month="$INPUT_MONTH"
+            skip=false
+          else
+            day="$(TZ=Asia/Tokyo date +%-d)"
+            week="$(( (day - 1) / 7 + 1 ))"
+            # 第1日曜 YouTube / 第2 blog / 第3 Instagram / 第4 podcast / 第5 予備でskip
+            case "$week" in
+              1) channel=youtube; skip=false ;;
+              2) channel=blog; skip=false ;;
+              3) channel=instagram; skip=false ;;
+              4) channel=podcast; skip=false ;;
+              5) channel=reserve; skip=true ;;
+              *) echo "unexpected JST week" >&2; exit 1 ;;
+            esac
+            first_day="$(TZ=Asia/Tokyo date +%Y-%m-01)"
+            month="$(TZ=Asia/Tokyo date -d "$first_day -1 month" +%Y-%m)"
+          fi
+          printf 'channel=%s\nmonth=%s\nskip=%s\n' "$channel" "$month" "$skip" >> "$GITHUB_OUTPUT"
+
+  render:
+    needs: select
+    if: needs.select.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-ipafont-gothic
+      - run: npm ci
+      - run: python -m pip install -r scripts/ranking-shorts-renderer/requirements.txt
+      - run: npm test
+      - run: PYTHONPATH=scripts/ranking-shorts-renderer python -m unittest discover -s scripts/ranking-shorts-renderer/tests -v
+      - name: Generate one review draft
+        env:
+          CONTENT_ANALYTICS_GAS_URL: ${{ secrets.CONTENT_ANALYTICS_GAS_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          npm run ranking:shorts -- \
+            --month "${{ needs.select.outputs.month }}" \
+            --channel "${{ needs.select.outputs.channel }}" \
+            --out "output/monthly-ranking/${{ needs.select.outputs.month }}-${{ needs.select.outputs.channel }}"
+      - name: Package immutable review draft
+        if: always()
+        run: |
+          target="${{ needs.select.outputs.month }}-${{ needs.select.outputs.channel }}"
+          if [[ -e "output/monthly-ranking/$target" || -L "output/monthly-ranking/$target" ]]; then
+            tar --dereference -czf "$target.tar.gz" -C output/monthly-ranking "$target"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monthly-ranking-shorts-${{ needs.select.outputs.month }}-${{ needs.select.outputs.channel }}
+          path: ${{ needs.select.outputs.month }}-${{ needs.select.outputs.channel }}.tar.gz
+          if-no-files-found: warn
+          retention-days: 30

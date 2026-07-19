@@ -1,11 +1,19 @@
 import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { createReadStream } from "node:fs";
+import { isIP } from "node:net";
 import { deflateSync } from "node:zlib";
 import {
+  open,
   lstat,
+  mkdtemp,
   mkdir,
   readFile,
   rename,
+  rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -15,7 +23,7 @@ import { validateManifest } from "../monthly-ranking-data/schema.mjs";
 import { buildCopy } from "./copy.mjs";
 import { recommendStyle, recordStyle, validateHistory } from "./history.mjs";
 
-const CHANNELS = Object.freeze(["youtube", "blog", "instagram"]);
+const CHANNELS = Object.freeze(["youtube", "blog", "instagram", "podcast"]);
 const STYLE_KEYS = new Set([
   "hook:cutout-zoom",
   "chapter:split-reveal",
@@ -25,6 +33,11 @@ const STYLE_KEYS = new Set([
 ]);
 const IMAGE_LIMIT = 12 * 1024 * 1024;
 const TEXT_LIMIT = 2 * 1024 * 1024;
+const MAX_REDIRECTS = 5;
+const LOCK_STALE_MS = 2 * 60 * 60 * 1000;
+const LOCK_WAIT_MS = 10_000;
+const LOCK_RETRY_MS = 50;
+const ALLOW_SUBDOMAINS = new Set(["gohome-clinic.com", "cdninstagram.com", "fbcdn.net"]);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(MODULE_DIR, "../..");
 const DEFAULT_HISTORY_PATH = path.join(REPOSITORY_ROOT, "config/monthly-ranking-style-history.json");
@@ -51,7 +64,8 @@ export function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const option = argv[index];
     const value = argv[index + 1];
-    if (option !== "--month" && option !== "--out" && !/^--(youtube|blog|instagram)-style$/.test(option ?? "")) {
+    if (option !== "--month" && option !== "--out" && option !== "--channel"
+      && !/^--(youtube|blog|instagram|podcast)-style$/.test(option ?? "")) {
       throw new Error(`unknown option: ${option ?? "option"}`);
     }
     if (!option?.startsWith("--") || value === undefined || value.startsWith("--")) {
@@ -61,8 +75,12 @@ export function parseArgs(argv) {
     seen.add(option);
     if (option === "--month") result.month = requireMonth(value);
     else if (option === "--out") result.outDir = value;
+    else if (option === "--channel") {
+      if (!CHANNELS.includes(value)) throw new Error("invalid channel");
+      result.channel = value;
+    }
     else {
-      const match = /^--(youtube|blog|instagram)-style$/.exec(option);
+      const match = /^--(youtube|blog|instagram|podcast)-style$/.exec(option);
       result.styles[match[1]] = parseStyle(value);
     }
   }
@@ -97,8 +115,79 @@ async function atomicWrite(target, value) {
     path.dirname(target),
     `.${path.basename(target)}.${process.pid}.${Date.now()}.tmp`,
   );
-  await writeFile(temporary, value);
-  await rename(temporary, target);
+  try {
+    await writeFile(temporary, value);
+    await rename(temporary, target);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function acquireFileLock(lockPath, {
+  staleMs = LOCK_STALE_MS,
+  waitMs = LOCK_WAIT_MS,
+} = {}) {
+  const started = Date.now();
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  while (true) {
+    try {
+      const owner = randomUUID();
+      const handle = await open(lockPath, "wx", 0o600);
+      try {
+        await handle.writeFile(`${JSON.stringify({ owner, pid: process.pid, createdAt: new Date().toISOString() })}\n`);
+      } catch (error) {
+        await handle.close().catch(() => {});
+        await rm(lockPath, { force: true }).catch(() => {});
+        throw error;
+      }
+      return async () => {
+        await handle.close().catch(() => {});
+        try {
+          const current = JSON.parse(await readFile(lockPath, "utf8"));
+          if (current?.owner === owner) await rm(lockPath, { force: true });
+        } catch (error) {
+          if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+        }
+      };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      let metadata;
+      try {
+        metadata = await lstat(lockPath);
+      } catch (statError) {
+        if (statError?.code === "ENOENT") continue;
+        throw statError;
+      }
+      if (Date.now() - metadata.mtimeMs > staleMs) {
+        const stale = `${lockPath}.stale.${process.pid}.${Date.now()}`;
+        try {
+          await rename(lockPath, stale);
+          await rm(stale, { force: true });
+          continue;
+        } catch (renameError) {
+          if (["ENOENT", "EEXIST"].includes(renameError?.code)) continue;
+          throw renameError;
+        }
+      }
+      if (Date.now() - started >= waitMs) throw new Error("lock acquisition timed out");
+      await sleep(LOCK_RETRY_MS);
+    }
+  }
+}
+
+async function pathExists(target) {
+  try {
+    await lstat(target);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function crc32(buffer) {
@@ -180,7 +269,8 @@ export async function writeProceduralBgm(target) {
 
 function allowedHost(hostname, allowed) {
   const normalized = hostname.toLowerCase().replace(/\.$/, "");
-  return allowed.some((domain) => normalized === domain || normalized.endsWith(`.${domain}`));
+  return allowed.some((domain) => normalized === domain
+    || (ALLOW_SUBDOMAINS.has(domain) && normalized.endsWith(`.${domain}`)));
 }
 
 function safeHttpsUrl(value, allowed, label) {
@@ -196,35 +286,128 @@ function safeHttpsUrl(value, allowed, label) {
   return url;
 }
 
-async function limitedBody(response, limit, method) {
-  if (!response?.ok) throw new Error(`asset request failed (${response?.status ?? "unknown"})`);
-  const body = method === "text"
-    ? Buffer.from(await response.text(), "utf8")
-    : Buffer.from(await response.arrayBuffer());
-  if (body.length > limit) throw new Error("asset response is too large");
-  return body;
+function isPublicIpAddress(address) {
+  const version = isIP(address);
+  if (version === 4) {
+    const parts = address.split(".").map(Number);
+    const [a, b] = parts;
+    return !(a === 0 || a === 10 || a === 127 || a >= 224
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && [0, 168].includes(b))
+      || (a === 198 && [18, 19, 51].includes(b))
+      || (a === 203 && b === 0));
+  }
+  if (version === 6) {
+    const normalized = address.toLowerCase().split("%")[0];
+    if (normalized.startsWith("::ffff:")) return isPublicIpAddress(normalized.slice(7));
+    return !(normalized === "::" || normalized === "::1"
+      || normalized.startsWith("fc") || normalized.startsWith("fd")
+      || /^fe[89ab]/u.test(normalized) || normalized.startsWith("ff"));
+  }
+  return false;
+}
+
+async function assertPublicResolution(hostname, lookupImpl) {
+  if (isIP(hostname)) throw new Error("IP-literal asset hosts are not allowed");
+  const result = await lookupImpl(hostname, { all: true, verbatim: true });
+  const addresses = Array.isArray(result) ? result : [result];
+  if (!addresses.length || addresses.some(({ address }) => !isPublicIpAddress(address))) {
+    throw new Error("asset host resolved to a non-public address");
+  }
+}
+
+function normalizedContentType(response) {
+  return String(response?.headers?.get?.("content-type") || "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+}
+
+async function limitedBody(response, limit) {
+  const rawLength = response?.headers?.get?.("content-length");
+  if (rawLength !== null && rawLength !== undefined && rawLength !== "") {
+    if (!/^\d+$/u.test(String(rawLength))) throw new Error("asset response has invalid content length");
+    const declared = Number(rawLength);
+    if (!Number.isSafeInteger(declared) || declared > limit) throw new Error("asset response is too large");
+  }
+  if (!response?.body || typeof response.body.getReader !== "function") {
+    throw new Error("asset response body is not streamable");
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      total += chunk.length;
+      if (total > limit) {
+        await reader.cancel("size limit exceeded").catch(() => {});
+        throw new Error("asset response is too large");
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
+}
+
+async function fetchAllowedResource({
+  url,
+  allowed,
+  acceptedTypes,
+  limit,
+  label,
+  fetchImpl,
+  lookupImpl,
+}) {
+  let current = safeHttpsUrl(url, allowed, label);
+  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+    await assertPublicResolution(current.hostname, lookupImpl);
+    const response = await fetchImpl(current.href, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if ([301, 302, 303, 307, 308].includes(response?.status)) {
+      if (redirects === MAX_REDIRECTS) throw new Error(`${label} has too many redirects`);
+      const location = response?.headers?.get?.("location");
+      if (!location) throw new Error(`${label} redirect is missing Location`);
+      current = safeHttpsUrl(new URL(location, current).href, allowed, `${label} redirect URL`);
+      continue;
+    }
+    if (!response?.ok) throw new Error(`${label} request failed (${response?.status ?? "unknown"})`);
+    const contentType = normalizedContentType(response);
+    if (!acceptedTypes.includes(contentType)) throw new Error(`${label} returned an unsupported content type`);
+    return { bytes: await limitedBody(response, limit), contentType, finalUrl: current };
+  }
+  throw new Error(`${label} has too many redirects`);
 }
 
 function imageExtension(bytes, contentType) {
-  if (bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")) && /image\/png/i.test(contentType ?? "")) return ".png";
-  if (bytes[0] === 0xff && bytes[1] === 0xd8 && /image\/jpe?g/i.test(contentType ?? "")) return ".jpg";
+  if (bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")) && contentType === "image/png") return ".png";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && ["image/jpeg", "image/jpg"].includes(contentType)) return ".jpg";
   if (bytes.subarray(0, 4).toString("ascii") === "RIFF"
     && bytes.subarray(8, 12).toString("ascii") === "WEBP"
-    && /image\/webp/i.test(contentType ?? "")) return ".webp";
+    && contentType === "image/webp") return ".webp";
   throw new Error("asset response is not a supported image");
 }
 
-async function fetchImage(url, allowed, fetchImpl) {
-  const requested = safeHttpsUrl(url, allowed, "asset URL");
-  const response = await fetchImpl(requested.href, {
-    method: "GET",
-    redirect: "follow",
-    signal: AbortSignal.timeout(15_000),
+async function fetchImage(url, allowed, fetchImpl, lookupImpl) {
+  const resource = await fetchAllowedResource({
+    url,
+    allowed,
+    acceptedTypes: ["image/png", "image/jpeg", "image/jpg", "image/webp"],
+    limit: IMAGE_LIMIT,
+    label: "asset",
+    fetchImpl,
+    lookupImpl,
   });
-  const finalUrl = response?.url || requested.href;
-  safeHttpsUrl(finalUrl, allowed, "asset redirect URL");
-  const bytes = await limitedBody(response, IMAGE_LIMIT, "bytes");
-  return { bytes, extension: imageExtension(bytes, response.headers?.get?.("content-type")) };
+  return { bytes: resource.bytes, extension: imageExtension(resource.bytes, resource.contentType) };
 }
 
 function extractOgImage(html) {
@@ -237,41 +420,51 @@ function extractOgImage(html) {
   throw new Error("blog page has no OG image");
 }
 
-async function blogImageUrl(item, fetchImpl) {
-  const pageUrl = safeHttpsUrl(item.url, ["gohome-clinic.com"], "blog URL");
-  const response = await fetchImpl(pageUrl.href, {
-    method: "GET",
-    redirect: "follow",
-    signal: AbortSignal.timeout(15_000),
+async function blogImageUrl(item, fetchImpl, lookupImpl) {
+  const resource = await fetchAllowedResource({
+    url: item.url,
+    allowed: ["gohome-clinic.com"],
+    acceptedTypes: ["text/html", "application/xhtml+xml"],
+    limit: TEXT_LIMIT,
+    label: "blog page",
+    fetchImpl,
+    lookupImpl,
   });
-  const finalUrl = safeHttpsUrl(response?.url || pageUrl.href, ["gohome-clinic.com"], "blog redirect URL");
-  const html = (await limitedBody(response, TEXT_LIMIT, "text")).toString("utf8");
-  return new URL(extractOgImage(html), finalUrl).href;
+  return new URL(extractOgImage(resource.bytes.toString("utf8")), resource.finalUrl).href;
 }
 
-async function instagramPosts(env, fetchImpl) {
+async function instagramPosts(env, fetchImpl, lookupImpl) {
   const api = safeHttpsUrl(env.CONTENT_ANALYTICS_GAS_URL, ["script.google.com", "script.googleusercontent.com"], "Instagram API URL");
   api.searchParams.set("api", "instagram-posts");
   api.searchParams.set("limit", "100");
-  const response = await fetchImpl(api.href, {
-    method: "GET",
-    redirect: "follow",
-    signal: AbortSignal.timeout(15_000),
+  const resource = await fetchAllowedResource({
+    url: api.href,
+    allowed: ["script.google.com", "script.googleusercontent.com"],
+    acceptedTypes: ["application/json"],
+    limit: TEXT_LIMIT,
+    label: "Instagram API",
+    fetchImpl,
+    lookupImpl,
   });
-  safeHttpsUrl(response?.url || api.href, ["script.google.com", "script.googleusercontent.com"], "Instagram API redirect URL");
-  const json = JSON.parse((await limitedBody(response, TEXT_LIMIT, "text")).toString("utf8"));
+  const json = JSON.parse(resource.bytes.toString("utf8"));
   const posts = Array.isArray(json?.data) ? json.data : json?.posts;
   if (!Array.isArray(posts)) throw new Error("Instagram posts payload is invalid");
   return posts;
 }
 
-export async function prepareChannelAssets({ manifest, assetsDir, fetchImpl = fetch, env = process.env }) {
+export async function prepareChannelAssets({
+  manifest,
+  assetsDir,
+  fetchImpl = fetch,
+  lookupImpl = dnsLookup,
+  env = process.env,
+}) {
   validateManifest(manifest);
   await mkdir(assetsDir, { recursive: true });
   let posts;
   if (manifest.channel === "instagram") {
     try {
-      posts = await instagramPosts(env, fetchImpl);
+      posts = await instagramPosts(env, fetchImpl, lookupImpl);
     } catch {
       posts = null;
     }
@@ -283,15 +476,25 @@ export async function prepareChannelAssets({ manifest, assetsDir, fetchImpl = fe
       if (manifest.channel === "youtube") {
         asset = await fetchImage(
           `https://i.ytimg.com/vi/${encodeURIComponent(item.contentId)}/hqdefault.jpg`,
-          ["i.ytimg.com"], fetchImpl,
+          ["i.ytimg.com"], fetchImpl, lookupImpl,
         );
       } else if (manifest.channel === "blog") {
-        asset = await fetchImage(await blogImageUrl(item, fetchImpl), ["gohome-clinic.com"], fetchImpl);
-      } else {
+        asset = await fetchImage(
+          await blogImageUrl(item, fetchImpl, lookupImpl),
+          ["gohome-clinic.com"], fetchImpl, lookupImpl,
+        );
+      } else if (manifest.channel === "instagram") {
         const post = posts?.find((candidate) => String(candidate?.id) === item.contentId);
         const url = post?.thumbnail_url || post?.media_url;
         if (!url) throw new Error("matching Instagram asset is missing");
-        asset = await fetchImage(url, ["cdninstagram.com", "fbcdn.net"], fetchImpl);
+        asset = await fetchImage(url, ["cdninstagram.com", "fbcdn.net"], fetchImpl, lookupImpl);
+      } else {
+        asset = await fetchImage(
+          item.imageUrl,
+          ["d3t3ozftmdmh3i.cloudfront.net"],
+          fetchImpl,
+          lookupImpl,
+        );
       }
     } catch {
       asset = { bytes: solidPng(manifest.channel, item.rank), extension: ".png" };
@@ -303,9 +506,21 @@ export async function prepareChannelAssets({ manifest, assetsDir, fetchImpl = fe
   return results;
 }
 
+async function sha256File(target) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(target)) hash.update(chunk);
+  return hash.digest("hex");
+}
+
 async function resolveBgm(outDir, env) {
   const explicit = env.RANKING_SHORTS_BGM?.trim();
-  if (!explicit) return writeProceduralBgm(path.join(outDir, "shared", "procedural-bgm.wav"));
+  if (!explicit) {
+    const bgmPath = await writeProceduralBgm(path.join(outDir, "shared", "procedural-bgm.wav"));
+    return {
+      path: bgmPath,
+      summary: { source: "procedural", sha256: await sha256File(bgmPath), licenseConfirmed: true },
+    };
+  }
   if (env.RANKING_SHORTS_BGM_LICENSE_CONFIRMED !== "true") {
     throw new Error("explicit BGM requires RANKING_SHORTS_BGM_LICENSE_CONFIRMED=true");
   }
@@ -314,11 +529,22 @@ async function resolveBgm(outDir, env) {
   if (!metadata.isFile() || lexical.isSymbolicLink() || !new Set([".wav", ".mp3", ".m4a", ".aac"]).has(path.extname(target).toLowerCase())) {
     throw new Error("explicit BGM must be a regular supported audio file");
   }
-  return target;
+  return {
+    path: target,
+    summary: { source: "explicit", sha256: await sha256File(target), licenseConfirmed: true },
+  };
 }
 
 function publicResultError() {
   return "channel processing failed; inspect local logs and source artifacts";
+}
+
+function rendererEnvironment(env) {
+  const names = [
+    "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "PYTHONPATH", "VIRTUAL_ENV",
+    "GEMINI_API_KEY", "GEMINI_TTS_MODEL", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+  ];
+  return Object.fromEntries(names.flatMap((name) => env[name] === undefined ? [] : [[name, env[name]]]));
 }
 
 async function verifyRendererArtifacts(videoPath) {
@@ -337,72 +563,163 @@ async function verifyRendererArtifacts(videoPath) {
   }
 }
 
+async function updateHistory(historyPath, records) {
+  if (!records.length) return;
+  const release = await acquireFileLock(`${historyPath}.lock`);
+  try {
+    const document = JSON.parse(await readFile(historyPath, "utf8"));
+    let history = [...validateHistoryDocument(document)];
+    for (const record of records) {
+      history = recordStyle(
+        record.channel,
+        record.month,
+        record.placement,
+        record.motion,
+        history,
+      );
+    }
+    await atomicWrite(historyPath, `${JSON.stringify({ schemaVersion: 1, entries: history }, null, 2)}\n`);
+  } finally {
+    await release();
+  }
+}
+
+function failedChannel(category) {
+  return {
+    status: "failed",
+    error: publicResultError(),
+    errorCategory: category,
+  };
+}
+
 export async function runMonthlyRanking({
   month,
   outDir,
+  channel,
   styles = {},
   spawnImpl = spawnChecked,
   fetchImpl = fetch,
+  lookupImpl = dnsLookup,
   env = process.env,
   historyPath = DEFAULT_HISTORY_PATH,
 } = {}) {
   requireMonth(month);
+  if (channel !== undefined && !CHANNELS.includes(channel)) throw new Error("invalid channel");
+  const selectedChannels = channel ? [channel] : [...CHANNELS];
   const outputRoot = path.resolve(outDir);
-  const historyDocument = JSON.parse(await readFile(historyPath, "utf8"));
-  let history = [...validateHistoryDocument(historyDocument)];
-  await spawnImpl("npm", ["run", "ranking:collect", "--", "--month", month, "--out", outputRoot], {
-    cwd: REPOSITORY_ROOT,
-    env,
-  });
-  const bgm = await resolveBgm(outputRoot, env);
+  const outputParent = path.dirname(outputRoot);
+  const outputName = path.basename(outputRoot);
+  const releaseOutputLock = await acquireFileLock(`${outputRoot}.lock`);
+  let runStage;
+  let completed;
+  let published = false;
+  try {
+    if (await pathExists(outputRoot)) throw new Error("output already exists");
+    const historyDocument = JSON.parse(await readFile(historyPath, "utf8"));
+    const history = [...validateHistoryDocument(historyDocument)];
+    await mkdir(outputParent, { recursive: true });
+    runStage = await mkdtemp(path.join(outputParent, `.${outputName}.tmp-`));
+    const stageSuffix = path.basename(runStage).slice(`.${outputName}.tmp-`.length);
+    completed = path.join(outputParent, `.${outputName}.complete-${stageSuffix}`);
 
-  const channels = {};
-  for (const channel of CHANNELS) {
-    try {
-      const channelDir = path.join(outputRoot, channel);
-      const manifestPath = path.join(channelDir, "ranking.json");
-      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-      validateManifest(manifest);
-      if (manifest.channel !== channel || manifest.period.month !== month) {
-        throw new Error("manifest channel or month does not match orchestration target");
+    const bgm = await resolveBgm(runStage, env);
+    const channels = {};
+    const historyRecords = [];
+    for (const currentChannel of selectedChannels) {
+      let category = "collection";
+      let channelStage;
+      try {
+        channelStage = await mkdtemp(path.join(runStage, `.channel-${currentChannel}.tmp-`));
+        const collectorRoot = path.join(channelStage, ".collector");
+        const collectorOut = path.join(collectorRoot, "result");
+        await spawnImpl("npm", [
+          "run", "ranking:collect", "--",
+          "--month", month,
+          "--out", collectorOut,
+          "--channel", currentChannel,
+        ], { cwd: REPOSITORY_ROOT, env });
+
+        category = "manifest";
+        const collectedManifestPath = path.join(collectorOut, currentChannel, "ranking.json");
+        const manifestSource = await readFile(collectedManifestPath, "utf8");
+        const manifest = JSON.parse(manifestSource);
+        validateManifest(manifest);
+        if (manifest.channel !== currentChannel || manifest.period.month !== month) {
+          throw new Error("manifest channel or month does not match orchestration target");
+        }
+        const manifestPath = path.join(channelStage, "ranking.json");
+        await atomicWrite(manifestPath, manifestSource.endsWith("\n") ? manifestSource : `${manifestSource}\n`);
+        await rm(collectorRoot, { recursive: true, force: true });
+
+        category = "copy";
+        const copy = buildCopy(manifest);
+        await atomicWrite(path.join(channelStage, "narration.txt"), `${copy.narration}\n`);
+        await atomicWrite(path.join(channelStage, "captions.json"), `${JSON.stringify(copy.captions, null, 2)}\n`);
+
+        category = "assets";
+        const assetsDir = path.join(channelStage, "assets");
+        await prepareChannelAssets({ manifest, assetsDir, fetchImpl, lookupImpl, env });
+        const style = styles[currentChannel]
+          ? parseStyle(`${styles[currentChannel].placement}:${styles[currentChannel].motion}`)
+          : recommendStyle(currentChannel, month, history);
+
+        category = "render";
+        const candidateDir = path.join(channelStage, "candidate");
+        const videoPath = path.join(candidateDir, "ranking-short.mp4");
+        await spawnImpl(env.RANKING_SHORTS_PYTHON || "python3", [
+          RENDERER_PATH,
+          "--manifest", manifestPath,
+          "--assets", assetsDir,
+          "--placement", style.placement,
+          "--motion", style.motion,
+          "--resolution", "1080x1920",
+          "--bgm", bgm.path,
+          "--out", videoPath,
+        ], { cwd: REPOSITORY_ROOT, env: rendererEnvironment(env) });
+
+        category = "verification";
+        await verifyRendererArtifacts(videoPath);
+        await atomicWrite(path.join(candidateDir, "post_caption.txt"), copy.postCaption);
+
+        category = "promotion";
+        const finalChannelStage = path.join(runStage, currentChannel);
+        await rename(channelStage, finalChannelStage);
+        channelStage = null;
+        const finalVideoPath = path.join(outputRoot, currentChannel, "candidate", "ranking-short.mp4");
+        historyRecords.push({ channel: currentChannel, month, ...style });
+        channels[currentChannel] = { status: "ok", output: finalVideoPath, style };
+      } catch (error) {
+        console.error(`${currentChannel} channel failed at ${category}`);
+        if (channelStage) await rm(channelStage, { recursive: true, force: true }).catch(() => {});
+        channels[currentChannel] = failedChannel(category);
       }
-      const copy = buildCopy(manifest);
-      await atomicWrite(path.join(channelDir, "narration.txt"), `${copy.narration}\n`);
-      await atomicWrite(path.join(channelDir, "captions.json"), `${JSON.stringify(copy.captions, null, 2)}\n`);
-      const assetsDir = path.join(channelDir, "assets");
-      await prepareChannelAssets({ manifest, assetsDir, fetchImpl, env });
-      const style = styles[channel] ? parseStyle(`${styles[channel].placement}:${styles[channel].motion}`) : recommendStyle(channel, month, history);
-      const candidateDir = path.join(channelDir, "candidate");
-      const videoPath = path.join(candidateDir, "ranking-short.mp4");
-      await spawnImpl(env.RANKING_SHORTS_PYTHON || "python3", [
-        RENDERER_PATH,
-        "--manifest", manifestPath,
-        "--assets", assetsDir,
-        "--placement", style.placement,
-        "--motion", style.motion,
-        "--resolution", "1080x1920",
-        "--bgm", bgm,
-        "--out", videoPath,
-      ], { cwd: REPOSITORY_ROOT, env });
-      await verifyRendererArtifacts(videoPath);
-      await atomicWrite(path.join(candidateDir, "post_caption.txt"), copy.postCaption);
-      history = recordStyle(channel, month, style.placement, style.motion, history);
-      channels[channel] = { status: "ok", output: videoPath, style };
-    } catch {
-      channels[channel] = { status: "failed", error: publicResultError() };
     }
-  }
 
-  await atomicWrite(historyPath, `${JSON.stringify({ schemaVersion: 1, entries: history }, null, 2)}\n`);
-  const summary = {
-    schemaVersion: 1,
-    month,
-    generatedAt: new Date().toISOString(),
-    publishAttempted: false,
-    channels,
-  };
-  await atomicWrite(path.join(outputRoot, "run-summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
-  return channels;
+    await updateHistory(historyPath, historyRecords);
+    const summary = {
+      schemaVersion: 1,
+      month,
+      generatedAt: new Date().toISOString(),
+      publishAttempted: false,
+      bgm: bgm.summary,
+      channels,
+    };
+    await atomicWrite(path.join(runStage, "run-summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
+    await rename(runStage, completed);
+    runStage = null;
+    try {
+      await symlink(path.relative(outputParent, completed), outputRoot, "dir");
+      published = true;
+    } catch (error) {
+      await rm(completed, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+    return channels;
+  } finally {
+    if (runStage) await rm(runStage, { recursive: true, force: true }).catch(() => {});
+    if (!published && completed) await rm(completed, { recursive: true, force: true }).catch(() => {});
+    await releaseOutputLock();
+  }
 }
 
 export async function main({ argv = process.argv.slice(2), env = process.env } = {}) {
