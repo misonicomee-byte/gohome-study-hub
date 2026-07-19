@@ -4,10 +4,10 @@
 
 ## 現在の本番状態と切り替え方
 
-- GAS本番は現在version 60です。version 61は、既存ポータルが`days=180`を送っていた一方、新GASが`startDate`と`endDate`を必須化したため、直ちにversion 60へロールバックされています。
+- GAS本番は現在version 63です。version 61で発見した既存ポータルの`days=180`互換問題は、`src/data/portal.ts`から明示的な`startDate`と`endDate`を送る修正で解消済みです。
 - 次回は新しいdeploymentを作らず、既存のproduction deployment IDを更新します。これによりWeb App URLを変えません。
-- `src/data/portal.ts`を含むサイト側互換修正を先に反映し、続けて同じdeployment IDをレビュー済みGAS versionへ更新し、その後サイトを再ビルドします。切り替え中はversion 60と新GASで期間仕様が異なるため、最後の再ビルドとendpoint確認までを一続きの作業として扱います。
-- `appsscript.json`の設定だけを根拠に公開済みと判断しません。運用者がApps Scriptの「デプロイを管理」で、実際のproduction deploymentが同じIDであり、アクセス権が公開利用者向けに設定されていることを確認してください。
+- `src/data/portal.ts`を含むサイト側互換修正と、同じdeployment IDを使ったGAS version 63への更新は完了しています。サイトを再ビルドした後もendpoint確認までを一続きの作業として扱います。
+- `appsscript.json`の設定だけを根拠に公開済みと判断しません。version 63では未ログインの外部クライアントからブログ、Instagram投稿、Instagram月次rankingのJSON応答を確認済みです。再デプロイ時も、同じdeployment IDと匿名アクセスを実測してください。
 - 問題があれば、同じdeployment IDとURLを保ったままversion 60へ戻します。
 
 ```bash
