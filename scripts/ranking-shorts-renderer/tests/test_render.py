@@ -46,14 +46,17 @@ class FakeResponse:
         return self.body
 
 
-def fake_manifest():
+def fake_manifest(channel="youtube"):
     items = tuple(
         SimpleNamespace(rank=rank, title=f"タイトル{rank}", metric_value=rank * 1000)
         for rank in (1, 2, 3)
     )
     return SimpleNamespace(
+        channel=channel,
         month="2026-06",
-        ranking_label="6月の再生回数",
+        ranking_label=(
+            "upstream label" if channel == "podcast" else "6月の再生回数"
+        ),
         items=items,
     )
 
@@ -113,6 +116,21 @@ class RenderTests(unittest.TestCase):
                 "気になる内容は、ごうホームクリニック公式チャンネルとサイトでご覧ください。",
             ),
         )
+
+    def test_podcast_script_reads_prior_month_view_growth_metrics(self):
+        script = build_script(fake_manifest("podcast"))
+
+        self.assertEqual(
+            script.captions,
+            (
+                "2026年6月のポッドキャスト、前月増加再生数トップ3。",
+                "第3位。タイトル3。前月増加再生数は、3,000回でした。",
+                "第2位。タイトル2。前月増加再生数は、2,000回でした。",
+                "第1位。タイトル1。前月増加再生数は、1,000回でした。",
+                "気になるエピソードは、ごうホームクリニック公式チャンネルとサイトでご覧ください。",
+            ),
+        )
+        self.assertNotIn("新着", "\n".join(script.captions))
 
     def test_script_naturalizes_iso_months_everywhere_tts_reads(self):
         manifest = fake_manifest()

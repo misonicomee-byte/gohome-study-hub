@@ -14,7 +14,13 @@ from dataclasses import dataclass
 from dataclasses import replace
 from pathlib import Path
 
-from ranking_shorts.model import MOTIONS, PLACEMENTS, RankingManifest, RenderConfig
+from ranking_shorts.model import (
+    INITIAL_MONTH_RANKING_MODE,
+    MOTIONS,
+    PLACEMENTS,
+    RankingManifest,
+    RenderConfig,
+)
 from ranking_shorts.qa import run_qa
 from ranking_shorts.render import IMAGE_SUFFIXES, TIMELINE, VIDEO_SUFFIXES, build_script, render_video
 
@@ -25,13 +31,20 @@ CHANNEL_LABELS = {
     "youtube": "YouTube Shorts",
     "blog": "ブログ",
     "instagram": "Instagram",
+    "podcast": "Podcast",
+}
+CHANNEL_DESCRIPTION_LABELS = {
+    "youtube": "YouTube Shorts",
+    "blog": "ブログ",
+    "instagram": "Instagram",
+    "podcast": "ポッドキャスト",
 }
 CHANNEL_TAGS = {
     "youtube": "#YouTubeShorts",
     "blog": "#クリニックブログ",
     "instagram": "#Instagram",
+    "podcast": "#ポッドキャスト",
 }
-INITIAL_MONTH_RANKING_MODE = "initialPublishedMonthCurrentViews"
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,21 +215,30 @@ def _japanese_month(month):
 def _post_caption(manifest):
     month = _japanese_month(manifest.month)
     channel_label = CHANNEL_LABELS[manifest.channel]
+    description_label = CHANNEL_DESCRIPTION_LABELS[manifest.channel]
     if manifest.ranking_mode == INITIAL_MONTH_RANKING_MODE:
         lead = (
-            f"{month}に公開された{channel_label}投稿を、現在の閲覧数で集計したTOP3です。"
+            f"{month}に公開された{description_label}投稿を、現在の閲覧数で集計したTOP3です。"
             f"初回限定の集計で、{month}中の増加数ではありません。"
         )
         ranking_label = (
             f"{month}公開投稿の現在の閲覧数（初回限定・月内の増加数ではありません）"
         )
+    elif manifest.channel == "podcast":
+        lead = f"{month}のポッドキャスト前月増加再生数TOP3をご紹介します。"
+        ranking_label = "前月増加再生数"
     else:
-        lead = f"{month}に多く見られた{channel_label}コンテンツTOP3をご紹介します。"
+        lead = f"{month}に多く見られた{description_label}コンテンツTOP3をご紹介します。"
         ranking_label = manifest.ranking_label.replace(manifest.month, month)
     ranking_lines = "\n\n".join(
         f"{item.rank}位 {item.title}\n{item.url}" for item in manifest.items
     )
-    title = f"【{month}】{channel_label} 人気コンテンツTOP3"
+    title_suffix = (
+        "前月増加再生数TOP3"
+        if manifest.channel == "podcast"
+        else "人気コンテンツTOP3"
+    )
+    title = f"【{month}】{channel_label} {title_suffix}"
     description = "\n\n".join(
         (
             lead,

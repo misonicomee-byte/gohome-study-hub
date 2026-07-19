@@ -69,6 +69,29 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             manifest.channel = "blog"
 
+    def test_manifest_accepts_podcast_as_a_fourth_channel(self):
+        raw = valid_manifest()
+        raw["channel"] = "podcast"
+
+        self.assertEqual(self.load(raw).channel, "podcast")
+
+    def test_initial_month_ranking_mode_is_instagram_only(self):
+        for channel in ("youtube", "blog", "podcast"):
+            with self.subTest(channel=channel):
+                raw = valid_manifest()
+                raw["channel"] = channel
+                raw["rankingMode"] = "initialPublishedMonthCurrentViews"
+                with self.assertRaisesRegex(ValueError, "rankingMode.*Instagram"):
+                    self.load(raw)
+
+        raw = valid_manifest()
+        raw["channel"] = "instagram"
+        raw["rankingMode"] = "initialPublishedMonthCurrentViews"
+        self.assertEqual(
+            self.load(raw).ranking_mode,
+            "initialPublishedMonthCurrentViews",
+        )
+
     def test_manifest_rejects_invalid_required_metadata(self):
         cases = {
             "schema version": ("schemaVersion", "1"),

@@ -56,15 +56,31 @@ def _naturalize_months(text):
 
 def build_script(manifest):
     ordered = tuple(sorted(manifest.items, key=lambda item: item.rank, reverse=True))
-    captions = [f"{_spoken_month(manifest.month)}の人気コンテンツ、トップ3。"]
+    is_podcast = manifest.channel == "podcast"
+    ranking_label = (
+        "前月増加再生数"
+        if is_podcast
+        else _naturalize_months(manifest.ranking_label)
+    )
+    hook = (
+        f"{_spoken_month(manifest.month)}のポッドキャスト、前月増加再生数トップ3。"
+        if is_podcast
+        else f"{_spoken_month(manifest.month)}の人気コンテンツ、トップ3。"
+    )
+    captions = [hook]
     captions.extend(
         f"第{item.rank}位。{_naturalize_months(item.title)}。"
-        f"{_naturalize_months(manifest.ranking_label)}は、"
+        f"{ranking_label}は、"
         f"{_metric_text(item.metric_value)}回でした。"
         for item in ordered
     )
     captions.append(
-        "気になる内容は、ごうホームクリニック公式チャンネルとサイトでご覧ください。"
+        (
+            "気になるエピソードは、"
+            if is_podcast
+            else "気になる内容は、"
+        )
+        + "ごうホームクリニック公式チャンネルとサイトでご覧ください。"
     )
     return Script(ordered, tuple(captions))
 

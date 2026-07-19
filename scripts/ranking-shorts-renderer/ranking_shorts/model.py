@@ -15,7 +15,8 @@ from urllib.parse import urlsplit
 
 MOTIONS = frozenset({"cutout-zoom", "split-reveal", "letter-scatter"})
 PLACEMENTS = frozenset({"hook", "chapter", "none"})
-CHANNELS = frozenset({"youtube", "blog", "instagram"})
+CHANNELS = frozenset({"youtube", "blog", "instagram", "podcast"})
+INITIAL_MONTH_RANKING_MODE = "initialPublishedMonthCurrentViews"
 
 _MONTH = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 _DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
@@ -154,7 +155,7 @@ class RankingManifest:
 
         channel = _required(manifest, "channel")
         if not isinstance(channel, str) or channel not in CHANNELS:
-            raise ValueError("channel must be youtube, blog, or instagram")
+            raise ValueError("channel must be youtube, blog, instagram, or podcast")
 
         period = _mapping(_required(manifest, "period"), "period")
         month = _required(period, "month")
@@ -179,6 +180,8 @@ class RankingManifest:
         ranking_mode = manifest.get("rankingMode")
         if ranking_mode is not None:
             ranking_mode = _string(ranking_mode, "rankingMode")
+        if ranking_mode == INITIAL_MONTH_RANKING_MODE and channel != "instagram":
+            raise ValueError("rankingMode initialPublishedMonthCurrentViews is Instagram-only")
 
         items = tuple(
             RankingItem(

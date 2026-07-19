@@ -283,7 +283,7 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             raw = valid_manifest()
-            raw["channel"] = "blog"
+            raw["channel"] = "instagram"
             raw["rankingMode"] = "initialPublishedMonthCurrentViews"
             raw["rankingLabel"] = "must not replace canonical mode wording"
             manifest_path = root / "ranking.json"
@@ -300,9 +300,9 @@ class CliTests(unittest.TestCase):
             self.assertEqual(
                 post_caption.read_text(encoding="utf-8"),
                 "■タイトル\n"
-                "【2026年6月】ブログ 人気コンテンツTOP3\n\n"
+                "【2026年6月】Instagram 人気コンテンツTOP3\n\n"
                 "■説明文\n"
-                "2026年6月に公開されたブログ投稿を、現在の閲覧数で集計したTOP3です。"
+                "2026年6月に公開されたInstagram投稿を、現在の閲覧数で集計したTOP3です。"
                 "初回限定の集計で、2026年6月中の増加数ではありません。\n\n"
                 "集計指標：2026年6月公開投稿の現在の閲覧数（初回限定・月内の増加数ではありません）\n\n"
                 "1位 タイトル1\nhttps://example.test/1\n\n"
@@ -310,8 +310,42 @@ class CliTests(unittest.TestCase):
                 "3位 タイトル3\nhttps://example.test/3\n\n"
                 "ごうホームクリニック\nhttps://gohome-clinic.com/\n\n"
                 "※本動画はAIを活用して制作しています。掲載情報は公式情報をご確認ください。\n\n"
-                "#ごうホームクリニック #訪問診療 #在宅医療 #人気コンテンツ #クリニックブログ\n",
+                "#ごうホームクリニック #訪問診療 #在宅医療 #人気コンテンツ #Instagram\n",
             )
+
+    def test_publication_copy_supports_podcast_in_one_copy_pasteable_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = valid_manifest()
+            raw["channel"] = "podcast"
+            raw["rankingLabel"] = "upstream label"
+            manifest_path = root / "ranking.json"
+            manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+            post_caption = root / "post_caption.txt"
+
+            self.cli._publication_files(
+                self.cli.RankingManifest.from_path(manifest_path),
+                post_caption,
+                root / "captions.json",
+            )
+
+            self.assertEqual(
+                post_caption.read_text(encoding="utf-8"),
+                "■タイトル\n"
+                "【2026年6月】Podcast 前月増加再生数TOP3\n\n"
+                "■説明文\n"
+                "2026年6月のポッドキャスト前月増加再生数TOP3をご紹介します。\n\n"
+                "集計指標：前月増加再生数\n\n"
+                "1位 タイトル1\nhttps://example.test/1\n\n"
+                "2位 タイトル2\nhttps://example.test/2\n\n"
+                "3位 タイトル3\nhttps://example.test/3\n\n"
+                "ごうホームクリニック\nhttps://gohome-clinic.com/\n\n"
+                "※本動画はAIを活用して制作しています。掲載情報は公式情報をご確認ください。\n\n"
+                "#ごうホームクリニック #訪問診療 #在宅医療 #人気コンテンツ #ポッドキャスト\n",
+            )
+            copy = post_caption.read_text(encoding="utf-8")
+            self.assertNotIn("新着", copy)
+            self.assertEqual(list(root.glob("*.txt")), [post_caption])
 
     def test_publication_copy_uses_instagram_media_label_and_hashtag(self):
         with tempfile.TemporaryDirectory() as temporary:
