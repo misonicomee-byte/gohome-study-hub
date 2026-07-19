@@ -115,17 +115,12 @@ function createHarness({
     AnalyticsData: {
       Properties: { runReport() { return { rows: analyticsRows }; } },
     },
-    SpreadsheetApp: {
-      openById(id) {
-        const rows = id === "podcast-sheet" ? podcastRows : spreadsheetRows;
-        const expectedName = id === "podcast-sheet" ? "Podcast一覧" : "instagram_daily";
-        return {
-          getSheetByName(name) {
-            if (name !== expectedName) return null;
-            return { getDataRange() { return { getValues() { spreadsheetReads += 1; return rows; } }; } };
-          },
-        };
-      },
+    Sheets: {
+      Spreadsheets: { Values: { get(id, range, options) {
+        spreadsheetReads += 1;
+        events.push({ type: "sheetsGet", id, range, options });
+        return { values: id === "podcast-sheet" ? podcastRows : spreadsheetRows };
+      } }, },
     },
   });
   vm.runInContext(source, context, { filename: "PublicCode.js" });
@@ -138,6 +133,20 @@ function createHarness({
     get lockHeld() { return lockHeld; },
     get spreadsheetReads() { return spreadsheetReads; },
   };
+}
+
+function sheetDateSerial(isoDate) {
+  return (Date.parse(`${isoDate}T00:00:00.000Z`) - Date.UTC(1899, 11, 30)) / 86400000;
+}
+
+function assertReadonlySheetRead(harness, expectedRange) {
+  const reads = harness.events.filter((event) => event.type === "sheetsGet");
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].range, expectedRange);
+  assert.deepEqual(JSON.parse(JSON.stringify(reads[0].options)), {
+    valueRenderOption: "UNFORMATTED_VALUE",
+    dateTimeRenderOption: "SERIAL_NUMBER",
+  });
 }
 
 function callApi(harness, params, parameterLists = null) {
@@ -176,12 +185,25 @@ test("public GAS is an anonymous JSON-only deployment with exact read-only scope
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/script.external_request",
   ]);
+  assert.deepEqual(manifest.dependencies.enabledAdvancedServices, [
+    {
+      userSymbol: "AnalyticsData",
+      version: "v1beta",
+      serviceId: "analyticsdata",
+    },
+    {
+      userSymbol: "Sheets",
+      version: "v4",
+      serviceId: "sheets",
+    },
+  ]);
   assert.doesNotMatch(
     source,
     /HtmlService|google\.script\.run|getAdsToken|sendToChatWork|ScriptApp|DriveApp|setProperty\(|deleteProperty\(|deleteAllProperties\(/,
   );
   assert.doesNotMatch(source, /access_token=/);
   assert.doesNotMatch(source, /appendRow|setValue\(|setValues\(|insertSheet|newTrigger|createTrigger/);
+  assert.doesNotMatch(source, /SpreadsheetApp/);
 
   const propertyNames = [...source.matchAll(/getProperty\("([A-Z0-9_]+)"\)/g)]
     .map((match) => match[1]);
@@ -386,10 +408,11 @@ test("monthly route preserves exact boundaries, ranking, and collector error cod
   ];
   const spreadsheetRows = [
     snapshotHeaders,
-    row("2026-06-01", "a", "2026-06-01T00:00:00Z", 1, 1),
-    row("2026-07-01", "a", "2026-06-01T00:00:00Z", 11, 3),
+    row(sheetDateSerial("2026-06-01"), "a", "2026-06-01T00:00:00Z", 1, 1),
+    row("2026/07/01", "a", "2026-06-01T00:00:00Z", 11, 3),
   ];
-  const result = callApi(createHarness({ spreadsheetRows }), {
+  const harness = createHarness({ spreadsheetRows });
+  const result = callApi(harness, {
     api: "instagram-monthly-ranking", month: "2026-06", limit: "3",
   });
   assert.equal(result.partial, false);
@@ -402,6 +425,7 @@ test("monthly route preserves exact boundaries, ranking, and collector error cod
   });
   assert.equal(result.data[0].viewsDelta, 10);
   assert.equal(result.data[0].totalInteractionsDelta, 2);
+  assertReadonlySheetRead(harness, "instagram_daily!A:K");
 
   const missingStore = createHarness();
   missingStore.properties.delete("CONTENT_SNAPSHOT_SPREADSHEET_ID");
@@ -427,19 +451,31 @@ test("monthly route preserves exact boundaries, ranking, and collector error cod
 test("podcast route preserves the portal response schema", () => {
   const podcastRows = [
     ["No", "platform", "title", "date", "url", "embed", "duration", "id"],
-    [1, "YouTube", "100 Episode", "2026/06/01", "https://example.test/watch", "", "", "yt-1"],
+    [1, "YouTube", "100 Episode", sheetDateSerial("2026-06-01"), "https://example.test/watch", "", "", "yt-1"],
+    [2, "YouTube", "101 Episode", "2026/06/02", "https://example.test/watch-2", "", "", "yt-2"],
   ];
-  const result = callApi(createHarness({ podcastRows }), { api: "podcast-list" });
+  const harness = createHarness({ podcastRows });
+  const result = callApi(harness, { api: "podcast-list" });
   assert.deepEqual(result, {
-    data: [{
-      id: "yt-1",
-      title: "100 Episode",
-      date: "2026-06-01",
-      url: "https://example.test/watch",
-      youtubeId: "yt-1",
-    }],
-    count: 1,
+    data: [
+      {
+        id: "yt-1",
+        title: "100 Episode",
+        date: "2026-06-01",
+        url: "https://example.test/watch",
+        youtubeId: "yt-1",
+      },
+      {
+        id: "yt-2",
+        title: "101 Episode",
+        date: "2026-06-02",
+        url: "https://example.test/watch-2",
+        youtubeId: "yt-2",
+      },
+    ],
+    count: 2,
   });
+  assertReadonlySheetRead(harness, "'Podcast一覧'!A:H");
 
   const manyRows = [podcastRows[0]];
   for (let index = 0; index < 1000; index += 1) {

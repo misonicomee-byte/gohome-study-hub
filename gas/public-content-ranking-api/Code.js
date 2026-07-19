@@ -338,15 +338,34 @@ function normalizeInstagramSnapshotText_(value) {
   return text;
 }
 
+function readSheetValues_(spreadsheetId, range) {
+  var response = Sheets.Spreadsheets.Values.get(spreadsheetId, range, {
+    valueRenderOption: "UNFORMATTED_VALUE",
+    dateTimeRenderOption: "SERIAL_NUMBER",
+  });
+  return response && Array.isArray(response.values) ? response.values : [];
+}
+
+function normalizeSheetDate_(value, timeZone) {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return Utilities.formatDate(value, timeZone, "yyyy-MM-dd");
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value < 1 || value > 2958465) return "";
+    var epoch = Date.UTC(1899, 11, 30);
+    var date = new Date(epoch + Math.floor(value) * 86400000);
+    return Utilities.formatDate(date, "UTC", "yyyy-MM-dd");
+  }
+  return String(value === undefined || value === null ? "" : value).replace(/\//g, "-");
+}
+
 function getInstagramMonthlyRanking_(month, limit) {
   var spreadsheetId = PropertiesService.getScriptProperties()
     .getProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID");
   if (!spreadsheetId) {
     return publicError_(PUBLIC_ERROR_CODES_.SNAPSHOT_NOT_CONFIGURED, "Instagram snapshot store is not configured");
   }
-  var sheet = SpreadsheetApp.openById(spreadsheetId).getSheetByName(INSTAGRAM_SNAPSHOT_SHEET_);
-  if (!sheet) return publicError_(PUBLIC_ERROR_CODES_.UPSTREAM_UNAVAILABLE, "Instagram snapshot data is unavailable");
-  var values = sheet.getDataRange().getValues();
+  var values = readSheetValues_(spreadsheetId, INSTAGRAM_SNAPSHOT_SHEET_ + "!A:K");
   if (!values.length) return publicError_(PUBLIC_ERROR_CODES_.UPSTREAM_UNAVAILABLE, "Instagram snapshot data is unavailable");
   var headers = values.shift();
   validateInstagramSnapshotSchema_(headers);
@@ -359,7 +378,7 @@ function getInstagramMonthlyRanking_(month, limit) {
   var endDate = Utilities.formatDate(createUtcCalendarDate_(parts[0], parts[1], 0), "UTC", "yyyy-MM-dd");
   var byDate = Object.create(null);
   values.forEach(function (row) {
-    var date = String(row[index.snapshotDate]);
+    var date = normalizeSheetDate_(row[index.snapshotDate], "Asia/Tokyo");
     if (date !== startDate && date !== boundaryDate) return;
     var id = normalizeInstagramSnapshotText_(row[index.mediaId]);
     if (!id) return;
@@ -445,9 +464,7 @@ function getPodcastList_() {
     return publicError_(PUBLIC_ERROR_CODES_.UPSTREAM_UNAVAILABLE, "Podcast list is temporarily unavailable");
   }
   try {
-    var sheet = SpreadsheetApp.openById(spreadsheetId).getSheetByName("Podcast一覧");
-    if (!sheet) return publicError_(PUBLIC_ERROR_CODES_.UPSTREAM_UNAVAILABLE, "Podcast list is temporarily unavailable");
-    var values = sheet.getDataRange().getValues();
+    var values = readSheetValues_(spreadsheetId, "'Podcast一覧'!A:H");
     var rows = [];
     for (var i = 1; i < values.length; i += 1) {
       var row = values[i];
@@ -455,9 +472,7 @@ function getPodcastList_() {
       var title = String(row[2] || "").trim();
       if (platform !== "YouTube" || !title || title.indexOf("【music】") !== -1) continue;
       var published = row[3];
-      var date = published instanceof Date
-        ? Utilities.formatDate(published, "Asia/Tokyo", "yyyy-MM-dd")
-        : String(published || "").replace(/\//g, "-");
+      var date = normalizeSheetDate_(published, "Asia/Tokyo");
       rows.push({
         id: String(row[7] || "").trim(),
         title: title,
