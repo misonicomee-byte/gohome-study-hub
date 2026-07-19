@@ -62,12 +62,18 @@ const snapshotHeaders = [
   "shares",
 ];
 
-function createSheet(initialRows = [], name = "instagram_daily") {
+function createSheet(initialRows = [], name = "instagram_daily", hooks = {}) {
   const rows = initialRows.map((row) => [...row]);
   return {
     rows,
     getName() { return name; },
-    getLastRow() { return rows.length; },
+    getLastColumn() {
+      return rows.reduce((maximum, row) => Math.max(maximum, row.length), 0);
+    },
+    getLastRow() {
+      hooks.onGetLastRow?.();
+      return rows.length;
+    },
     appendRow(row) { rows.push([...row]); },
     getDataRange() {
       return { getValues() { return rows.map((row) => [...row]); } };
@@ -80,6 +86,7 @@ function createSheet(initialRows = [], name = "instagram_daily") {
             .map((value) => value.slice(0, columnCount));
         },
         setValues(values) {
+          hooks.onSetValues?.(values);
           for (let index = 0; index < values.length; index += 1) {
             rows[row - 1 + index] = [...values[index]];
           }
@@ -91,9 +98,18 @@ function createSheet(initialRows = [], name = "instagram_daily") {
 
 function createSnapshotHarness({
   id = "snapshot-spreadsheet",
-  sheet = createSheet([snapshotHeaders]),
+  sheet,
   triggers = [],
+  lockAvailable = true,
+  events = [],
 } = {}) {
+  let lockHeld = false;
+  if (sheet === undefined) {
+    sheet = createSheet([snapshotHeaders], "instagram_daily", {
+      onGetLastRow() { events.push({ type: "lastRow", lockHeld }); },
+      onSetValues() { events.push({ type: "setValues", lockHeld }); },
+    });
+  }
   const properties = new Map();
   if (id) properties.set("CONTENT_SNAPSHOT_SPREADSHEET_ID", id);
   const spreadsheet = {
@@ -107,6 +123,23 @@ function createSnapshotHarness({
   const createdTriggerSchedules = [];
   const activeTriggers = [...triggers];
   const overrides = {
+    LockService: {
+      getScriptLock() {
+        return {
+          tryLock(timeout) {
+            events.push({ type: "tryLock", timeout, lockHeld });
+            if (!lockAvailable || lockHeld) return false;
+            lockHeld = true;
+            return true;
+          },
+          releaseLock() {
+            events.push({ type: "releaseLock", lockHeld });
+            assert.equal(lockHeld, true);
+            lockHeld = false;
+          },
+        };
+      },
+    },
     PropertiesService: {
       getScriptProperties() {
         return {
@@ -146,6 +179,8 @@ function createSnapshotHarness({
     sheet,
     activeTriggers,
     createdTriggerSchedules,
+    events,
+    get lockHeld() { return lockHeld; },
     get createCalls() { return createCalls; },
     get openCalls() { return openCalls; },
     get triggerCreateCalls() { return triggerCreateCalls; },
@@ -383,9 +418,8 @@ test("snapshot setup creates the store once and keeps exactly one daily trigger"
   assert.deepEqual(harness.sheet.rows, [snapshotHeaders]);
   assert.equal(harness.properties.get("CONTENT_SNAPSHOT_SPREADSHEET_ID"), "created-spreadsheet");
   assert.equal(harness.createCalls, 1);
-  assert.equal(harness.triggerCreateCalls, 2);
+  assert.equal(harness.triggerCreateCalls, 1);
   assert.deepEqual(harness.createdTriggerSchedules, [
-    { handler: "runDailyInstagramSnapshot", everyDays: 1, atHour: 6 },
     { handler: "runDailyInstagramSnapshot", everyDays: 1, atHour: 6 },
   ]);
   assert.equal(
@@ -393,6 +427,16 @@ test("snapshot setup creates the store once and keeps exactly one daily trigger"
       trigger.getHandlerFunction() === "runDailyInstagramSnapshot").length,
     1,
   );
+  assert.deepEqual(
+    harness.events.filter((event) => event.type === "tryLock" || event.type === "releaseLock"),
+    [
+      { type: "tryLock", timeout: 30000, lockHeld: false },
+      { type: "releaseLock", lockHeld: true },
+      { type: "tryLock", timeout: 30000, lockHeld: false },
+      { type: "releaseLock", lockHeld: true },
+    ],
+  );
+  assert.equal(harness.lockHeld, false);
 });
 
 test("snapshot setup replaces duplicate daily triggers without touching other handlers", () => {
@@ -403,7 +447,7 @@ test("snapshot setup replaces duplicate daily triggers without touching other ha
 
   vm.runInContext("setupInstagramSnapshotStore()", context);
 
-  assert.equal(harness.triggerCreateCalls, 1);
+  assert.equal(harness.triggerCreateCalls, 0);
   assert.equal(harness.activeTriggers.includes(other), true);
   assert.equal(harness.activeTriggers.length, 2);
   assert.equal(
@@ -411,6 +455,26 @@ test("snapshot setup replaces duplicate daily triggers without touching other ha
       trigger.getHandlerFunction() === "runDailyInstagramSnapshot").length,
     1,
   );
+  assert.equal(harness.lockHeld, false);
+});
+
+test("snapshot setup uses a bounded lock and releases it when setup fails", () => {
+  const events = [];
+  const sheet = createSheet([snapshotHeaders], "instagram_daily", {
+    onGetLastRow() { throw new Error("sheet unavailable"); },
+  });
+  const harness = createSnapshotHarness({ sheet, events });
+  const context = loadGas(harness.overrides);
+
+  assert.throws(
+    () => vm.runInContext("setupInstagramSnapshotStore()", context),
+    /sheet unavailable/,
+  );
+  assert.deepEqual(events, [
+    { type: "tryLock", timeout: 30000, lockHeld: false },
+    { type: "releaseLock", lockHeld: true },
+  ]);
+  assert.equal(harness.lockHeld, false);
 });
 
 test("daily capture appends numeric safe snapshot rows", () => {
@@ -432,8 +496,12 @@ test("daily capture appends numeric safe snapshot rows", () => {
       },
     ],
   };
+  context.__fetchPosts = function () {
+    harness.events.push({ type: "fetch", lockHeld: harness.lockHeld });
+    return context.__posts;
+  };
   vm.runInContext(
-    "getInstagramPostsWithInsights = function () { return __posts; }",
+    "getInstagramPostsWithInsights = function () { return __fetchPosts(); }",
     context,
   );
 
@@ -457,6 +525,130 @@ test("daily capture appends numeric safe snapshot rows", () => {
     assert.equal(typeof metric, "number");
     assert.ok(Number.isFinite(metric) && metric >= 0);
   }
+  const fetchIndex = harness.events.findIndex((event) => event.type === "fetch");
+  const lockedLastRowIndex = harness.events.findIndex((event) =>
+    event.type === "lastRow" && event.lockHeld === true);
+  assert.ok(fetchIndex >= 0 && lockedLastRowIndex > fetchIndex);
+  assert.equal(harness.events[fetchIndex].lockHeld, false);
+  assert.equal(
+    harness.events.find((event) => event.type === "setValues")?.lockHeld,
+    true,
+  );
+  assert.equal(harness.lockHeld, false);
+});
+
+test("daily capture safely stores and exactly restores formula-like snapshot text", () => {
+  const dangerous = ["=formula", "+formula", "-formula", "@formula"];
+  const harness = createSnapshotHarness();
+  const context = loadGas(harness.overrides);
+  context.__posts = {
+    data: dangerous.map((prefix, index) => ({
+      id: `${prefix}-id`,
+      timestamp: `${prefix}-timestamp`,
+      permalink: `${prefix}-https://example.test/${index}`,
+      caption: `${prefix}-caption`,
+      media_type: `${prefix}-type`,
+      views: index,
+      total_interactions: index,
+    })),
+  };
+  vm.runInContext(
+    "getInstagramPostsWithInsights = function () { return __posts; }",
+    context,
+  );
+
+  vm.runInContext("runDailyInstagramSnapshot()", context);
+
+  for (const row of harness.sheet.rows.slice(1)) {
+    for (const text of row.slice(1, 6)) {
+      assert.doesNotMatch(text, /^[=+\-@]/);
+    }
+  }
+
+  const startRows = harness.sheet.rows.slice(1).map((row) => [
+    "2026-06-01",
+    ...row.slice(1, 6),
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  const boundaryRows = harness.sheet.rows.slice(1).map((row, index) => [
+    "2026-07-01",
+    ...row.slice(1, 6),
+    index + 1,
+    0,
+    index + 1,
+    0,
+    0,
+  ]);
+  harness.sheet.rows.splice(1, harness.sheet.rows.length - 1, ...startRows, ...boundaryRows);
+
+  const result = callJsonApi(context, {
+    api: "instagram-monthly-ranking",
+    month: "2026-06",
+    limit: "100",
+  });
+
+  assert.equal(result.error, undefined);
+  assert.deepEqual(
+    result.data.map((item) => ({
+      id: item.id,
+      timestamp: item.timestamp,
+      permalink: item.permalink,
+      caption: item.caption,
+      media_type: item.media_type,
+    })).sort((a, b) => a.id.localeCompare(b.id)),
+    dangerous.map((prefix, index) => ({
+      id: `${prefix}-id`,
+      timestamp: `${prefix}-timestamp`,
+      permalink: `${prefix}-https://example.test/${index}`,
+      caption: `${prefix}-caption`,
+      media_type: `${prefix}-type`,
+    })).sort((a, b) => a.id.localeCompare(b.id)),
+  );
+});
+
+test("daily append releases its bounded lock when the sheet write fails", () => {
+  const events = [];
+  let lockHeld = false;
+  const sheet = createSheet([snapshotHeaders], "instagram_daily", {
+    onGetLastRow() { events.push({ type: "lastRow", lockHeld }); },
+    onSetValues() { throw new Error("write failed"); },
+  });
+  const harness = createSnapshotHarness({ sheet, events });
+  Object.defineProperty(harness.overrides.LockService, "getScriptLock", {
+    value() {
+      return {
+        tryLock(timeout) {
+          events.push({ type: "tryLock", timeout, lockHeld });
+          lockHeld = true;
+          return true;
+        },
+        releaseLock() {
+          events.push({ type: "releaseLock", lockHeld });
+          lockHeld = false;
+        },
+      };
+    },
+  });
+  const context = loadGas(harness.overrides);
+  vm.runInContext(
+    "getInstagramPostsWithInsights = function () { return { data: [{ id: 'post-1' }] }; }",
+    context,
+  );
+
+  assert.throws(
+    () => vm.runInContext("runDailyInstagramSnapshot()", context),
+    /write failed/,
+  );
+  assert.deepEqual(events.slice(-3), [
+    { type: "tryLock", timeout: 30000, lockHeld: false },
+    { type: "lastRow", lockHeld: true },
+    { type: "releaseLock", lockHeld: true },
+  ]);
+  assert.equal(lockHeld, false);
 });
 
 test("daily capture fails before calling Instagram for missing store, sheet, schema, or API errors", () => {
@@ -528,6 +720,73 @@ test("monthly ranking rejects invalid calendar months and limits before reading 
     assert.match(result.error, /limit must be a positive integer/);
   }
   assert.equal(harness.openCalls, 0);
+});
+
+test("snapshot schema rejects duplicate required headers but accepts a unique extra column", () => {
+  const context = loadGas();
+  context.__headers = [...snapshotHeaders, "editorNote"];
+  assert.doesNotThrow(() =>
+    vm.runInContext("validateInstagramSnapshotSchema_(__headers)", context));
+
+  for (const duplicate of snapshotHeaders) {
+    context.__headers = [...snapshotHeaders, "editorNote", duplicate];
+    assert.throws(
+      () => vm.runInContext("validateInstagramSnapshotSchema_(__headers)", context),
+      /schema/i,
+      duplicate,
+    );
+  }
+});
+
+test("setup and daily capture validate required-header duplicates beyond the base columns", () => {
+  for (const operation of ["setupInstagramSnapshotStore", "runDailyInstagramSnapshot"]) {
+    const sheet = createSheet([[...snapshotHeaders, "editorNote", "caption"]]);
+    const harness = createSnapshotHarness({ sheet });
+    const context = loadGas(harness.overrides);
+    context.__calls = 0;
+    vm.runInContext(
+      "getInstagramPostsWithInsights = function () { __calls += 1; return { data: [] }; }",
+      context,
+    );
+
+    assert.throws(
+      () => vm.runInContext(`${operation}()`, context),
+      /schema/i,
+      operation,
+    );
+    assert.equal(context.__calls, 0);
+  }
+});
+
+test("monthly ranking calculates Gregorian boundaries for years 0001 through 0099", () => {
+  for (const expected of [
+    {
+      month: "0001-01",
+      boundary: "0001-02-01",
+      end: "0001-01-31",
+    },
+    {
+      month: "0099-12",
+      boundary: "0100-01-01",
+      end: "0099-12-31",
+    },
+  ]) {
+    const sheet = createSheet([
+      snapshotHeaders,
+      [`${expected.month}-01`, "post", "", "", "", "VIDEO", 0, 0, 0, 0, 0],
+      [expected.boundary, "post", "", "", "", "VIDEO", 1, 0, 1, 0, 0],
+    ]);
+    const context = loadGas(createSnapshotHarness({ sheet }).overrides);
+    const result = callJsonApi(context, {
+      api: "instagram-monthly-ranking",
+      month: expected.month,
+      limit: "3",
+    });
+
+    assert.equal(result.error, undefined, expected.month);
+    assert.equal(result.period.boundarySnapshotDate, expected.boundary);
+    assert.equal(result.period.endDate, expected.end);
+  }
 });
 
 test("monthly ranking requires the sheet schema and both exact boundary dates", () => {

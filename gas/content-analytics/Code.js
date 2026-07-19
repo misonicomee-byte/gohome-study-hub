@@ -402,6 +402,8 @@ function getInstagramPostsWithInsights(limit) {
 
 // ===== INSTAGRAM DAILY SNAPSHOTS =====
 var INSTAGRAM_SNAPSHOT_SHEET_ = "instagram_daily";
+var INSTAGRAM_SNAPSHOT_LOCK_TIMEOUT_MS_ = 30000;
+var INSTAGRAM_SNAPSHOT_TEXT_PREFIX_ = "\u200B";
 var INSTAGRAM_SNAPSHOT_HEADERS_ = [
   "snapshotDate",
   "mediaId",
@@ -425,12 +427,30 @@ function validateInstagramSnapshotSchema_(headers) {
       throw new Error("Instagram snapshot sheet schema is invalid");
     }
   }
+
+  var required = Object.create(null);
+  var seen = Object.create(null);
+  INSTAGRAM_SNAPSHOT_HEADERS_.forEach(function (name) {
+    required[name] = true;
+  });
+  headers.forEach(function (header) {
+    var name = String(header);
+    if (!required[name]) return;
+    if (seen[name]) throw new Error("Instagram snapshot sheet schema is invalid");
+    seen[name] = true;
+  });
 }
 
 function getInstagramSnapshotSheet_(spreadsheet) {
   var sheet = spreadsheet.getSheetByName(INSTAGRAM_SNAPSHOT_SHEET_);
   if (!sheet) throw new Error("instagram_daily snapshot sheet is missing");
   return sheet;
+}
+
+function getInstagramSnapshotHeaders_(sheet) {
+  var lastColumn = sheet.getLastColumn();
+  if (lastColumn < 1) return [];
+  return sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
 }
 
 function safeSnapshotMetric_(value) {
@@ -441,41 +461,75 @@ function safeSnapshotMetric_(value) {
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
 }
 
+function encodeInstagramSnapshotText_(value) {
+  var text = String(value === undefined || value === null ? "" : value);
+  if (/^[=+\-@']/.test(text) || text.indexOf(INSTAGRAM_SNAPSHOT_TEXT_PREFIX_) === 0) {
+    return "'" + INSTAGRAM_SNAPSHOT_TEXT_PREFIX_ + text;
+  }
+  return text;
+}
+
+function normalizeInstagramSnapshotText_(value) {
+  var text = String(value === undefined || value === null ? "" : value);
+  var rawPrefix = "'" + INSTAGRAM_SNAPSHOT_TEXT_PREFIX_;
+  if (text.indexOf(rawPrefix) === 0) return text.slice(rawPrefix.length);
+  if (text.indexOf(INSTAGRAM_SNAPSHOT_TEXT_PREFIX_) === 0) {
+    return text.slice(INSTAGRAM_SNAPSHOT_TEXT_PREFIX_.length);
+  }
+  return text;
+}
+
+function createUtcCalendarDate_(year, monthIndex, day) {
+  var date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, monthIndex, day);
+  return date;
+}
+
 function setupInstagramSnapshotStore() {
-  var props = PropertiesService.getScriptProperties();
-  var id = props.getProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID");
-  var spreadsheet = id
-    ? SpreadsheetApp.openById(id)
-    : SpreadsheetApp.create("Instagram content snapshots");
-
-  if (!id) {
-    id = spreadsheet.getId();
-    props.setProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID", id);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(INSTAGRAM_SNAPSHOT_LOCK_TIMEOUT_MS_)) {
+    throw new Error("Could not acquire Instagram snapshot setup lock");
   }
 
-  var sheet = spreadsheet.getSheetByName(INSTAGRAM_SNAPSHOT_SHEET_) ||
-    spreadsheet.insertSheet(INSTAGRAM_SNAPSHOT_SHEET_);
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(INSTAGRAM_SNAPSHOT_HEADERS_);
-  } else {
-    validateInstagramSnapshotSchema_(
-      sheet.getRange(1, 1, 1, INSTAGRAM_SNAPSHOT_HEADERS_.length).getValues()[0]
-    );
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var id = props.getProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID");
+    var spreadsheet = id
+      ? SpreadsheetApp.openById(id)
+      : SpreadsheetApp.create("Instagram content snapshots");
+
+    if (!id) {
+      id = spreadsheet.getId();
+      props.setProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID", id);
+    }
+
+    var sheet = spreadsheet.getSheetByName(INSTAGRAM_SNAPSHOT_SHEET_) ||
+      spreadsheet.insertSheet(INSTAGRAM_SNAPSHOT_SHEET_);
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(INSTAGRAM_SNAPSHOT_HEADERS_);
+    } else {
+      validateInstagramSnapshotSchema_(getInstagramSnapshotHeaders_(sheet));
+    }
+
+    var dailyTriggers = ScriptApp.getProjectTriggers().filter(function (trigger) {
+      return trigger.getHandlerFunction() === "runDailyInstagramSnapshot";
+    });
+    dailyTriggers.slice(1).forEach(function (trigger) {
+      ScriptApp.deleteTrigger(trigger);
+    });
+    if (dailyTriggers.length === 0) {
+      ScriptApp.newTrigger("runDailyInstagramSnapshot")
+        .timeBased()
+        .everyDays(1)
+        .atHour(6)
+        .create();
+    }
+
+    return { spreadsheetId: id, sheet: sheet.getName() };
+  } finally {
+    lock.releaseLock();
   }
-
-  var dailyTriggers = ScriptApp.getProjectTriggers().filter(function (trigger) {
-    return trigger.getHandlerFunction() === "runDailyInstagramSnapshot";
-  });
-  dailyTriggers.forEach(function (trigger) {
-    ScriptApp.deleteTrigger(trigger);
-  });
-  ScriptApp.newTrigger("runDailyInstagramSnapshot")
-    .timeBased()
-    .everyDays(1)
-    .atHour(6)
-    .create();
-
-  return { spreadsheetId: id, sheet: sheet.getName() };
 }
 
 function runDailyInstagramSnapshot() {
@@ -487,9 +541,7 @@ function runDailyInstagramSnapshot() {
   if (sheet.getLastRow() === 0) {
     throw new Error("Instagram snapshot sheet schema is missing");
   }
-  validateInstagramSnapshotSchema_(
-    sheet.getRange(1, 1, 1, INSTAGRAM_SNAPSHOT_HEADERS_.length).getValues()[0]
-  );
+  validateInstagramSnapshotSchema_(getInstagramSnapshotHeaders_(sheet));
 
   var posts = getInstagramPostsWithInsights(100);
   if (!posts || posts.error) {
@@ -506,11 +558,11 @@ function runDailyInstagramSnapshot() {
     }
     return [
       snapshotDate,
-      String(post.id),
-      String(post.timestamp || ""),
-      String(post.permalink || ""),
-      String(post.caption || ""),
-      String(post.media_type || ""),
+      encodeInstagramSnapshotText_(post.id),
+      encodeInstagramSnapshotText_(post.timestamp || ""),
+      encodeInstagramSnapshotText_(post.permalink || ""),
+      encodeInstagramSnapshotText_(post.caption || ""),
+      encodeInstagramSnapshotText_(post.media_type || ""),
       safeSnapshotMetric_(post.views),
       safeSnapshotMetric_(post.reach),
       safeSnapshotMetric_(post.total_interactions),
@@ -520,12 +572,30 @@ function runDailyInstagramSnapshot() {
   });
 
   if (rows.length) {
-    sheet.getRange(
-      sheet.getLastRow() + 1,
-      1,
-      rows.length,
-      INSTAGRAM_SNAPSHOT_HEADERS_.length
-    ).setValues(rows);
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(INSTAGRAM_SNAPSHOT_LOCK_TIMEOUT_MS_)) {
+      throw new Error("Could not acquire Instagram snapshot append lock");
+    }
+    try {
+      id = PropertiesService.getScriptProperties()
+        .getProperty("CONTENT_SNAPSHOT_SPREADSHEET_ID");
+      if (!id) throw new Error("Run setupInstagramSnapshotStore first");
+
+      sheet = getInstagramSnapshotSheet_(SpreadsheetApp.openById(id));
+      var lastRow = sheet.getLastRow();
+      if (lastRow === 0) {
+        throw new Error("Instagram snapshot sheet schema is missing");
+      }
+      validateInstagramSnapshotSchema_(getInstagramSnapshotHeaders_(sheet));
+      sheet.getRange(
+        lastRow + 1,
+        1,
+        rows.length,
+        INSTAGRAM_SNAPSHOT_HEADERS_.length
+      ).setValues(rows);
+    } finally {
+      lock.releaseLock();
+    }
   }
   return { snapshotDate: snapshotDate, rowsAppended: rows.length };
 }
@@ -552,12 +622,12 @@ function getInstagramMonthlyRanking_(month, limit) {
   var parts = month.split("-").map(Number);
   var startDate = month + "-01";
   var boundarySnapshotDate = Utilities.formatDate(
-    new Date(Date.UTC(parts[0], parts[1], 1)),
+    createUtcCalendarDate_(parts[0], parts[1], 1),
     "UTC",
     "yyyy-MM-dd"
   );
   var endDate = Utilities.formatDate(
-    new Date(Date.UTC(parts[0], parts[1], 0)),
+    createUtcCalendarDate_(parts[0], parts[1], 0),
     "UTC",
     "yyyy-MM-dd"
   );
@@ -566,9 +636,7 @@ function getInstagramMonthlyRanking_(month, limit) {
   values.forEach(function (row) {
     var date = String(row[index.snapshotDate]);
     if (date !== startDate && date !== boundarySnapshotDate) return;
-    var mediaId = String(row[index.mediaId] === undefined || row[index.mediaId] === null
-      ? ""
-      : row[index.mediaId]);
+    var mediaId = normalizeInstagramSnapshotText_(row[index.mediaId]);
     if (!mediaId) return;
     if (!byDate[date]) byDate[date] = Object.create(null);
     // Append-only rows are chronological, so assignment makes the latest capture win.
@@ -588,10 +656,10 @@ function getInstagramMonthlyRanking_(month, limit) {
       var last = byDate[boundarySnapshotDate][mediaId];
       return {
         id: mediaId,
-        timestamp: String(last[index.timestamp] || ""),
-        permalink: String(last[index.permalink] || ""),
-        caption: String(last[index.caption] || ""),
-        media_type: String(last[index.mediaType] || ""),
+        timestamp: normalizeInstagramSnapshotText_(last[index.timestamp]),
+        permalink: normalizeInstagramSnapshotText_(last[index.permalink]),
+        caption: normalizeInstagramSnapshotText_(last[index.caption]),
+        media_type: normalizeInstagramSnapshotText_(last[index.mediaType]),
         viewsDelta: Math.max(
           0,
           safeSnapshotMetric_(last[index.views]) - safeSnapshotMetric_(first[index.views])
