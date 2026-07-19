@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { validateManifest } from "../scripts/monthly-ranking-data/schema.mjs";
+import { validateManifest, writeManifest } from "../scripts/monthly-ranking-data/schema.mjs";
 
 const valid = {
   schemaVersion: 1,
@@ -29,3 +32,57 @@ test("rejects duplicate ranks", () => assert.throws(() => validateManifest({
   ...valid,
   items: valid.items.map((item) => ({ ...item, rank: 1 })),
 }), /ranks 1,2,3/));
+
+test("rejects required manifest metadata when missing or invalid", () => {
+  const invalidManifests = [
+    { ...valid, period: { ...valid.period, month: undefined } },
+    { ...valid, period: { ...valid.period, month: "2026-13" } },
+    { ...valid, period: { ...valid.period, startDate: undefined } },
+    { ...valid, period: { ...valid.period, startDate: "2026-06-31" } },
+    { ...valid, period: { ...valid.period, endDate: undefined } },
+    { ...valid, period: { ...valid.period, endDate: "2026-07-01" } },
+    { ...valid, period: { ...valid.period, startDate: "2026-06-30", endDate: "2026-06-01" } },
+    { ...valid, rankingMetric: undefined },
+    { ...valid, rankingMetric: "" },
+    { ...valid, rankingLabel: undefined },
+    { ...valid, generatedAt: undefined },
+    { ...valid, generatedAt: "2026-02-30T09:00:00+09:00" },
+  ];
+
+  for (const manifest of invalidManifests) {
+    assert.throws(() => validateManifest(manifest));
+  }
+});
+
+test("rejects required item fields when missing or invalid", () => {
+  const invalidItems = [
+    { ...valid.items[0], contentId: undefined },
+    { ...valid.items[0], contentId: "" },
+    { ...valid.items[0], title: undefined },
+    { ...valid.items[0], url: undefined },
+    { ...valid.items[0], url: "not a URL" },
+    { ...valid.items[0], publishedAt: undefined },
+    { ...valid.items[0], publishedAt: "2026-02-30" },
+    { ...valid.items[0], metricValue: undefined },
+    { ...valid.items[0], metricValue: Number.NaN },
+    { ...valid.items[0], secondaryMetricValue: undefined },
+    { ...valid.items[0], secondaryMetricValue: Number.POSITIVE_INFINITY },
+  ];
+
+  for (const item of invalidItems) {
+    assert.throws(() => validateManifest({ ...valid, items: [item, ...valid.items.slice(1)] }));
+  }
+});
+
+test("writeManifest creates parent directories and writes stable JSON", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "monthly-ranking-schema-"));
+  const path = join(directory, "nested", "ranking.json");
+  try {
+    await writeManifest(path, valid);
+    const contents = await readFile(path, "utf8");
+    assert.equal(contents, `${JSON.stringify(valid, null, 2)}\n`);
+    assert.deepEqual(JSON.parse(contents), valid);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
