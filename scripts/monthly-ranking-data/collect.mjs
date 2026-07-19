@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { mkdir, mkdtemp, rename, rm, symlink } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collectBlogRanking } from "./blog.mjs";
 import { collectInstagramRanking } from "./instagram.mjs";
@@ -18,7 +18,15 @@ const OAUTH_NETWORK_ERROR_CODES = new Set([
   "ENOTFOUND",
   "ETIMEDOUT",
 ]);
-const DEFAULT_FILE_OPS = { mkdir, mkdtemp, rename, rm };
+const CLEANUP_ERROR_CODES = new Set([
+  "EACCES",
+  "EBUSY",
+  "EIO",
+  "ENOENT",
+  "ENOTEMPTY",
+  "EPERM",
+]);
+const DEFAULT_FILE_OPS = { mkdir, mkdtemp, rename, rm, symlink };
 
 function nonEmptyEnvironmentValue(env, name) {
   const value = env[name];
@@ -142,32 +150,51 @@ function requireChannelManifests(manifests) {
   }
 }
 
+function appendCleanupFailures(error, cleanup, labels) {
+  const failures = cleanup.flatMap((result, index) => {
+    if (result.status !== "rejected") return [];
+    const code = typeof result.reason?.code === "string"
+      && CLEANUP_ERROR_CODES.has(result.reason.code)
+      ? ` code=${result.reason.code}`
+      : "";
+    return [`${labels[index]}${code}`];
+  });
+  if (failures.length === 0) return error;
+
+  const suffix = `; cleanup failed: ${failures.join(", ")}`;
+  if (error instanceof Error) {
+    try {
+      error.message = `${error.message}${suffix}`;
+      return error;
+    } catch {
+      return new Error(`${error.message}${suffix}`, { cause: error });
+    }
+  }
+  return new Error(`${String(error)}${suffix}`, { cause: error });
+}
+
 async function writeStagedManifests(out, manifests, fileOps = {}) {
   const operations = { ...DEFAULT_FILE_OPS, ...fileOps };
   const parent = dirname(out);
   await operations.mkdir(parent, { recursive: true });
-  const staging = await operations.mkdtemp(join(parent, `.${basename(out)}.tmp-`));
-  let finalCreated = false;
+  const outputName = basename(out);
+  const stagingPrefixName = `.${outputName}.tmp-`;
+  const staging = await operations.mkdtemp(join(parent, stagingPrefixName));
+  const uniqueSuffix = basename(staging).slice(stagingPrefixName.length);
+  const completed = join(parent, `.${outputName}.complete-${uniqueSuffix}`);
   try {
     await Promise.all(manifests.map((manifest) => writeManifest(
       join(staging, manifest.channel, "ranking.json"),
       manifest,
     )));
-    try {
-      await operations.mkdir(out, { recursive: false });
-      finalCreated = true;
-    } catch (error) {
-      if (error?.code === "EEXIST") throw new Error(`output path already exists: ${out}`);
-      throw error;
-    }
-    for (const manifest of manifests) {
-      await operations.rename(join(staging, manifest.channel), join(out, manifest.channel));
-    }
-    await operations.rm(staging, { recursive: true, force: true });
+    await operations.rename(staging, completed);
+    await operations.symlink(relative(parent, completed), out, "dir");
   } catch (error) {
-    if (finalCreated) await operations.rm(out, { recursive: true, force: true });
-    await operations.rm(staging, { recursive: true, force: true });
-    throw error;
+    const cleanupPaths = [staging, completed];
+    const cleanup = await Promise.allSettled(cleanupPaths.map((path) => Promise.resolve()
+      .then(() => operations.rm(path, { recursive: true, force: true }))));
+    const labels = ["staging directory", "completed sibling"];
+    throw appendCleanupFailures(error, cleanup, labels);
   }
 }
 

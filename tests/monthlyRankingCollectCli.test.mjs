@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, readdir, rename, rm } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import {
   parseCollectArgs,
@@ -335,9 +345,9 @@ test("an externally created empty output directory is never overwritten", async 
         instagram: async () => fixtureManifest("instagram"),
       },
       fileOps: {
-        mkdir: async (path, options) => {
-          if (path === out && options?.recursive === false) await mkdir(out);
-          return mkdir(path, options);
+        symlink: async (target, path, type) => {
+          await mkdir(out);
+          return symlink(target, path, type);
         },
       },
     }),
@@ -348,11 +358,76 @@ test("an externally created empty output directory is never overwritten", async 
   assert.deepEqual(await readdir(root), ["reserved"]);
 });
 
-test("a mid-promotion move failure removes the partial final directory", async (t) => {
+test("output publication is absent before the atomic boundary and complete immediately after", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "monthly-ranking-publication-boundary-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const out = join(root, "published");
+  const observations = [];
+
+  await runCollection({
+    argv: ["--month", "2026-06", "--out", out],
+    env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec", YOUTUBE_ACCESS_TOKEN: "test-token" },
+    now,
+    collectors: {
+      youtube: async () => fixtureManifest("youtube"),
+      blog: async () => fixtureManifest("blog"),
+      instagram: async () => fixtureManifest("instagram"),
+    },
+    fileOps: {
+      symlink: async (target, path, type) => {
+        assert.equal(path, out);
+        assert.equal(type, "dir");
+        await assert.rejects(lstat(out), (error) => error?.code === "ENOENT");
+        const completed = resolve(dirname(out), target);
+        observations.push({ before: await readdir(completed) });
+        await symlink(target, path, type);
+        observations.push({ after: await readdir(out) });
+      },
+    },
+  });
+
+  const expectedChannels = ["blog", "instagram", "youtube"];
+  assert.deepEqual(observations, [
+    { before: expectedChannels },
+    { after: expectedChannels },
+  ]);
+});
+
+test("published output is a relative sibling symlink to a complete immutable directory", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "monthly-ranking-relative-link-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const out = join(root, "published");
+
+  const result = await runCollection({
+    argv: ["--month", "2026-06", "--out", out],
+    env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec", YOUTUBE_ACCESS_TOKEN: "test-token" },
+    now,
+    collectors: {
+      youtube: async () => fixtureManifest("youtube"),
+      blog: async () => fixtureManifest("blog"),
+      instagram: async () => fixtureManifest("instagram"),
+    },
+  });
+
+  assert.equal(result.out, out);
+  assert.equal((await lstat(out)).isSymbolicLink(), true);
+  const target = await readlink(out);
+  assert.equal(isAbsolute(target), false);
+  assert.equal(target, basename(target));
+  assert.match(target, /^\.published\.complete-/);
+  const completed = resolve(root, target);
+  assert.equal((await lstat(completed)).isDirectory(), true);
+  assert.deepEqual((await readdir(completed)).sort(), ["blog", "instagram", "youtube"]);
+  for (const channel of ["youtube", "blog", "instagram"]) {
+    const manifest = JSON.parse(await readFile(join(result.out, channel, "ranking.json"), "utf8"));
+    assert.equal(manifest.channel, channel);
+  }
+});
+
+test("a completed-directory promotion failure removes every temporary path", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "monthly-ranking-promotion-failure-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const out = join(root, "failed-promotion");
-  let moves = 0;
 
   await assert.rejects(
     runCollection({
@@ -365,14 +440,10 @@ test("a mid-promotion move failure removes the partial final directory", async (
         instagram: async () => fixtureManifest("instagram"),
       },
       fileOps: {
-        rename: async (from, to) => {
-          moves += 1;
-          if (moves === 2) {
-            const error = new Error("injected promotion failure");
-            error.code = "EIO";
-            throw error;
-          }
-          return rename(from, to);
+        rename: async () => {
+          const error = new Error("injected promotion failure");
+          error.code = "EIO";
+          throw error;
         },
       },
     }),
@@ -381,6 +452,82 @@ test("a mid-promotion move failure removes the partial final directory", async (
 
   await assert.rejects(access(out));
   assert.deepEqual(await readdir(root), []);
+});
+
+test("publication failure removes the completed sibling without altering output", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "monthly-ranking-publication-failure-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const out = join(root, "failed-publication");
+
+  await assert.rejects(
+    runCollection({
+      argv: ["--month", "2026-06", "--out", out],
+      env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec", YOUTUBE_ACCESS_TOKEN: "test-token" },
+      now,
+      collectors: {
+        youtube: async () => fixtureManifest("youtube"),
+        blog: async () => fixtureManifest("blog"),
+        instagram: async () => fixtureManifest("instagram"),
+      },
+      fileOps: {
+        symlink: async () => {
+          const error = new Error("injected publication failure");
+          error.code = "EIO";
+          throw error;
+        },
+      },
+    }),
+    /injected publication failure/,
+  );
+
+  await assert.rejects(lstat(out), (error) => error?.code === "ENOENT");
+  assert.deepEqual(await readdir(root), []);
+});
+
+test("cleanup attempts every path and appends sanitized failures to the original error", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "monthly-ranking-cleanup-failure-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const out = join(root, "failed-cleanup");
+  const cleanupSecret = "cleanup-secret-must-not-leak";
+  const rmCalls = [];
+  const originalError = new Error("injected publication failure");
+  originalError.code = "EIO";
+
+  let caught;
+  try {
+    await runCollection({
+      argv: ["--month", "2026-06", "--out", out],
+      env: { CONTENT_ANALYTICS_GAS_URL: "https://example.test/exec", YOUTUBE_ACCESS_TOKEN: "test-token" },
+      now,
+      collectors: {
+        youtube: async () => fixtureManifest("youtube"),
+        blog: async () => fixtureManifest("blog"),
+        instagram: async () => fixtureManifest("instagram"),
+      },
+      fileOps: {
+        symlink: async () => { throw originalError; },
+        rm: (path, options) => {
+          rmCalls.push(path);
+          if (basename(path).startsWith(".failed-cleanup.complete-")) {
+            const error = new Error(cleanupSecret);
+            error.code = "EPERM";
+            throw error;
+          }
+          return rm(path, options);
+        },
+      },
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.equal(caught, originalError);
+  assert.match(caught.message, /^injected publication failure/);
+  assert.match(caught.message, /cleanup failed: completed sibling code=EPERM/);
+  assert.doesNotMatch(caught.message, new RegExp(cleanupSecret));
+  assert.equal(rmCalls.length, 2);
+  assert.equal(rmCalls.some((path) => basename(path).startsWith(".failed-cleanup.tmp-")), true);
+  assert.equal(rmCalls.some((path) => basename(path).startsWith(".failed-cleanup.complete-")), true);
 });
 
 test("concurrent collectors for one output have exactly one complete winner", async (t) => {
