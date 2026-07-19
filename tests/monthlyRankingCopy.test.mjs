@@ -68,3 +68,36 @@ test("rejects malformed periods, prototype channels, injection, claims, and unsa
   assert.throws(() => buildCopy({ ...manifest, items: manifest.items.map((item, index) => index ? item : { ...item, title: "必ず治る記事" }) }));
   assert.throws(() => buildCopy({ ...manifest, items: manifest.items.map((item, index) => index ? item : { ...item, url: "https://user:pass@example.test/1" }) }));
 });
+
+test("rejects broader medical claims in titles and ranking labels", () => {
+  assert.throws(() => buildCopy({
+    ...manifest,
+    rankingLabel: "症状が改善します",
+  }), /claim/i);
+  assert.throws(() => buildCopy({
+    ...manifest,
+    items: manifest.items.map((item, index) => index
+      ? item
+      : { ...item, title: "病気を予防できます" }),
+  }), /claim/i);
+});
+
+test("rejects non-canonical HTTPS URLs and fallback metadata mismatches", () => {
+  assert.throws(() => buildCopy({
+    ...manifest,
+    items: manifest.items.map((item, index) => index
+      ? item
+      : { ...item, url: "https://example.test/space here" }),
+  }), /URL/i);
+  assert.throws(() => buildCopy({
+    ...manifest,
+    channel: "youtube",
+    rankingMetric: "currentViewsOfPostsPublishedInMonth",
+    rankingMode: "initialPublishedMonthCurrentViews",
+  }), /fallback/i);
+  assert.throws(() => buildCopy({
+    ...manifest,
+    channel: "instagram",
+    rankingMode: "initialPublishedMonthCurrentViews",
+  }), /fallback/i);
+});

@@ -19,7 +19,7 @@ function japaneseMonth(month) {
 }
 
 const CONTROL = /[\u0000-\u001f\u007f]/u;
-const MEDICAL_CLAIM = /治る|治ります|完治|必ず|絶対|最高の医療|治療効果/u;
+const MEDICAL_CLAIM = /治る|治ります|完治|必ず|絶対|最高の医療|治療効果|(?:改善|予防)(?:する|します|できる|できます)|効果(?:が)?(?:ある|あります)/u;
 
 function safeText(value, name) {
   if (typeof value !== "string" || !value.trim() || value.length > 500 || CONTROL.test(value)) {
@@ -32,10 +32,18 @@ function safeText(value, name) {
 function safeHttpsUrl(value, name) {
   safeText(value, name);
   const parsed = new URL(value);
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || !parsed.hostname) {
+  if (/\s/u.test(value) || parsed.protocol !== "https:" || parsed.username || parsed.password || !parsed.hostname) {
     throw new Error(`${name} must be a public HTTPS URL`);
   }
   return value;
+}
+
+function validateFallbackMetadata(manifest) {
+  const usesFallbackMode = manifest.rankingMode === "initialPublishedMonthCurrentViews";
+  const usesFallbackMetric = manifest.rankingMetric === "currentViewsOfPostsPublishedInMonth";
+  if (usesFallbackMode !== usesFallbackMetric || (usesFallbackMode && manifest.channel !== "instagram")) {
+    throw new Error("invalid Instagram fallback metadata");
+  }
 }
 
 function localizedRankingLabel(manifest, month) {
@@ -56,6 +64,7 @@ function descriptionLead(manifest, month, channelLabel) {
 export function buildCopy(manifest) {
   validateManifest(manifest);
   if (!Object.hasOwn(CHANNEL_LABELS, manifest.channel)) throw new Error("invalid manifest copy input");
+  validateFallbackMetadata(manifest);
   const month = japaneseMonth(manifest.period?.month);
   const items = manifest.items;
   const rankingLabel = localizedRankingLabel(manifest, month);
