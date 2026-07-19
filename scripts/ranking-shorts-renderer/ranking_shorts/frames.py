@@ -1,7 +1,11 @@
+import unicodedata
+
 from PIL import Image, ImageDraw, ImageFilter
 
 from .layout import load_font, safe_area
 from .motions import motion_state
+
+MAX_TRANSITION_CODEPOINTS = 512
 
 
 def fit_asset(image, canvas):
@@ -46,21 +50,59 @@ def _scaled(value, canvas):
     return round(value * min(canvas[0] / 1080, canvas[1] / 1920))
 
 
-def _multiline(draw, text, max_width, max_height, canvas, start_size, minimum_size=18):
-    size = _scaled(start_size, canvas)
-    minimum = _scaled(minimum_size, canvas)
-    while size >= minimum:
+def _multiline(
+    draw,
+    text,
+    max_width,
+    max_height,
+    canvas,
+    start_size,
+    minimum_size=18,
+    field_name="text",
+):
+    def layout_at(size):
         font = load_font(size)
         limit = max(1, int(max_width / max(size, 1)))
         rendered = "\n".join(semantic_lines(text, limit))
         spacing = max(1, round(size * 0.18))
         bounds = draw.multiline_textbbox((0, 0), rendered, font=font, spacing=spacing)
-        if bounds[2] - bounds[0] <= max_width and bounds[3] - bounds[1] <= max_height:
+        return rendered, font, spacing, bounds
+
+    def fits(bounds):
+        return (
+            bounds[2] - bounds[0] <= max_width
+            and bounds[3] - bounds[1] <= max_height
+        )
+
+    size = _scaled(start_size, canvas)
+    minimum = _scaled(minimum_size, canvas)
+    minimum_layout = layout_at(minimum)
+    if not fits(minimum_layout[3]):
+        raise ValueError(f"{field_name} does not fit inside its safe-area box")
+    while size > minimum:
+        rendered, font, spacing, bounds = layout_at(size)
+        if fits(bounds):
             return rendered, font, spacing
         size -= 2
-    font = load_font(minimum)
-    limit = max(1, int(max_width / max(minimum, 1)))
-    return "\n".join(semantic_lines(text, limit)), font, max(1, round(minimum * 0.18))
+    return minimum_layout[:3]
+
+
+def _fit_single_line_font(draw, text, max_width, canvas, start_size):
+    low = 1
+    high = _scaled(start_size, canvas)
+    best = None
+    while low <= high:
+        size = (low + high) // 2
+        font = load_font(size)
+        bounds = draw.textbbox((0, 0), text, font=font)
+        if bounds[2] - bounds[0] <= max_width:
+            best = font
+            low = size + 1
+        else:
+            high = size - 1
+    if best is None:
+        raise ValueError("metric does not fit inside its safe-area box")
+    return best
 
 
 def _metric_text(value):
@@ -116,6 +158,7 @@ def render_rank_frame(manifest, item, asset, time, config):
             title_height,
             canvas,
             62,
+            field_name="title",
         )
         draw.multiline_text(
             (text_left, title_top),
@@ -137,6 +180,7 @@ def render_rank_frame(manifest, item, asset, time, config):
             canvas,
             36,
             22,
+            field_name="ranking label",
         )
         draw.multiline_text(
             (label_left, label_y),
@@ -146,10 +190,17 @@ def render_rank_frame(manifest, item, asset, time, config):
             spacing=label_spacing,
         )
 
-    metric_font = load_font(_scaled(92, canvas))
+    metric_text = _metric_text(item.metric_value)
+    metric_font = _fit_single_line_font(
+        draw,
+        metric_text,
+        right - left - _scaled(68, canvas),
+        canvas,
+        92,
+    )
     draw.text(
         (right - _scaled(34, canvas), bottom - _scaled(42, canvas)),
-        _metric_text(item.metric_value),
+        metric_text,
         font=metric_font,
         fill=(255, 215, 100, 255),
         anchor="rs",
@@ -171,6 +222,7 @@ def _text_mask(text, canvas, font_size=190):
         canvas,
         font_size,
         32,
+        field_name="transition text",
     )
     bounds = draw.multiline_textbbox((0, 0), rendered, font=font, spacing=spacing)
     x = (canvas[0] - (bounds[2] - bounds[0])) // 2 - bounds[0]
@@ -180,12 +232,25 @@ def _text_mask(text, canvas, font_size=190):
 
 
 def _scaled_center_mask(mask, scale):
+    if scale <= 0:
+        raise ValueError("mask scale must be positive")
     canvas = mask.size
-    scaled_size = (max(1, round(canvas[0] * scale)), max(1, round(canvas[1] * scale)))
-    scaled = mask.resize(scaled_size, Image.Resampling.BICUBIC)
-    result = Image.new("L", canvas, 0)
-    result.paste(scaled, ((canvas[0] - scaled.width) // 2, (canvas[1] - scaled.height) // 2))
-    return result
+    inverse_scale = 1 / scale
+    center_x = canvas[0] / 2
+    center_y = canvas[1] / 2
+    return mask.transform(
+        canvas,
+        Image.Transform.AFFINE,
+        (
+            inverse_scale,
+            0,
+            center_x * (1 - inverse_scale),
+            0,
+            inverse_scale,
+            center_y * (1 - inverse_scale),
+        ),
+        resample=Image.Resampling.BICUBIC,
+    )
 
 
 def _background_with_title(background, text):
@@ -208,8 +273,35 @@ def _single_line_font(text, canvas):
     return load_font(minimum)
 
 
+def _grapheme_clusters(text):
+    if len(text) > MAX_TRANSITION_CODEPOINTS:
+        raise ValueError(
+            f"transition text exceeds {MAX_TRANSITION_CODEPOINTS} code points"
+        )
+    clusters = []
+    for character in text:
+        codepoint = ord(character)
+        extends_previous = (
+            unicodedata.category(character) in {"Mn", "Mc", "Me"}
+            or 0xFE00 <= codepoint <= 0xFE0F
+            or 0xE0100 <= codepoint <= 0xE01EF
+            or 0x1F3FB <= codepoint <= 0x1F3FF
+            or character == "\u200d"
+            or bool(clusters and clusters[-1][-1] == "\u200d")
+        )
+        if clusters and extends_previous:
+            clusters[-1].append(character)
+        else:
+            clusters.append([character])
+    result = tuple("".join(cluster) for cluster in clusters)
+    if "".join(result) != text:
+        raise AssertionError("grapheme grouping must preserve the exact text")
+    return result
+
+
 def _letter_scatter(text, next_frame, background, progress, canvas):
-    state = motion_state("letter-scatter", progress, len(text))
+    graphemes = _grapheme_clusters(text)
+    state = motion_state("letter-scatter", progress, len(graphemes))
     reveal = 1 - state["opacity"]
     result = Image.blend(background, next_frame, reveal).convert("RGBA")
     if not text or state["opacity"] <= 0:
@@ -217,10 +309,10 @@ def _letter_scatter(text, next_frame, background, progress, canvas):
 
     font = _single_line_font(text, canvas)
     scratch = ImageDraw.Draw(Image.new("L", canvas))
-    widths = [scratch.textlength(glyph, font=font) for glyph in text]
+    widths = [scratch.textlength(glyph, font=font) for glyph in graphemes]
     cursor = (canvas[0] - sum(widths)) / 2
     center_y = canvas[1] / 2
-    for glyph, width, transform in zip(text, widths, state["glyphs"]):
+    for glyph, width, transform in zip(graphemes, widths, state["glyphs"]):
         bounds = scratch.textbbox((0, 0), glyph or " ", font=font)
         glyph_width = max(1, bounds[2] - bounds[0] + _scaled(24, canvas))
         glyph_height = max(1, bounds[3] - bounds[1] + _scaled(24, canvas))
@@ -249,6 +341,8 @@ def render_transition_frame(text, next_frame, background, progress, config):
     canvas = (config.width, config.height)
     next_image = next_frame.convert("RGB").resize(canvas, Image.Resampling.LANCZOS)
     background_image = background.convert("RGB").resize(canvas, Image.Resampling.LANCZOS)
+    if float(progress) >= 1:
+        return next_image
 
     if config.motion == "cutout-zoom":
         state = motion_state(config.motion, progress, len(text))
