@@ -102,6 +102,7 @@ function createSnapshotHarness({
   triggers = [],
   lockAvailable = true,
   events = [],
+  onFlush,
 } = {}) {
   let lockHeld = false;
   if (sheet === undefined) {
@@ -151,6 +152,10 @@ function createSnapshotHarness({
     SpreadsheetApp: {
       create() { createCalls += 1; return spreadsheet; },
       openById() { openCalls += 1; return spreadsheet; },
+      flush() {
+        events.push({ type: "flush", lockHeld });
+        onFlush?.();
+      },
     },
     ScriptApp: {
       getProjectTriggers() { return [...activeTriggers]; },
@@ -436,6 +441,10 @@ test("snapshot setup creates the store once and keeps exactly one daily trigger"
       { type: "releaseLock", lockHeld: true },
     ],
   );
+  const setupFlushIndex = harness.events.findIndex((event) => event.type === "flush");
+  const firstSetupReleaseIndex = harness.events.findIndex((event) => event.type === "releaseLock");
+  assert.ok(setupFlushIndex >= 0 && setupFlushIndex < firstSetupReleaseIndex);
+  assert.equal(harness.events[setupFlushIndex].lockHeld, true);
   assert.equal(harness.lockHeld, false);
 });
 
@@ -534,6 +543,11 @@ test("daily capture appends numeric safe snapshot rows", () => {
     harness.events.find((event) => event.type === "setValues")?.lockHeld,
     true,
   );
+  const setValuesIndex = harness.events.findIndex((event) => event.type === "setValues");
+  const flushIndex = harness.events.findIndex((event) => event.type === "flush");
+  const releaseIndex = harness.events.findIndex((event) => event.type === "releaseLock");
+  assert.ok(setValuesIndex >= 0 && setValuesIndex < flushIndex && flushIndex < releaseIndex);
+  assert.equal(harness.events[flushIndex].lockHeld, true);
   assert.equal(harness.lockHeld, false);
 });
 
@@ -649,6 +663,30 @@ test("daily append releases its bounded lock when the sheet write fails", () => 
     { type: "releaseLock", lockHeld: true },
   ]);
   assert.equal(lockHeld, false);
+});
+
+test("daily append releases its bounded lock when the sheet flush fails", () => {
+  const events = [];
+  const harness = createSnapshotHarness({
+    events,
+    onFlush() { throw new Error("flush failed"); },
+  });
+  const context = loadGas(harness.overrides);
+  vm.runInContext(
+    "getInstagramPostsWithInsights = function () { return { data: [{ id: 'post-1' }] }; }",
+    context,
+  );
+
+  assert.throws(
+    () => vm.runInContext("runDailyInstagramSnapshot()", context),
+    /flush failed/,
+  );
+  const setValuesIndex = events.findIndex((event) => event.type === "setValues");
+  const flushIndex = events.findIndex((event) => event.type === "flush");
+  const releaseIndex = events.findIndex((event) => event.type === "releaseLock");
+  assert.ok(setValuesIndex >= 0 && setValuesIndex < flushIndex && flushIndex < releaseIndex);
+  assert.equal(events[flushIndex].lockHeld, true);
+  assert.equal(harness.lockHeld, false);
 });
 
 test("daily capture fails before calling Instagram for missing store, sheet, schema, or API errors", () => {

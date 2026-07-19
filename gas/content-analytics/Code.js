@@ -508,6 +508,7 @@ function setupInstagramSnapshotStore() {
       spreadsheet.insertSheet(INSTAGRAM_SNAPSHOT_SHEET_);
     if (sheet.getLastRow() === 0) {
       sheet.appendRow(INSTAGRAM_SNAPSHOT_HEADERS_);
+      SpreadsheetApp.flush();
     } else {
       validateInstagramSnapshotSchema_(getInstagramSnapshotHeaders_(sheet));
     }
@@ -593,6 +594,7 @@ function runDailyInstagramSnapshot() {
         rows.length,
         INSTAGRAM_SNAPSHOT_HEADERS_.length
       ).setValues(rows);
+      SpreadsheetApp.flush();
     } finally {
       lock.releaseLock();
     }
