@@ -488,6 +488,12 @@ test("snapshot setup uses a bounded lock and releases it when setup fails", () =
 
 test("daily capture appends numeric safe snapshot rows", () => {
   const harness = createSnapshotHarness();
+  const RealDate = Date;
+  harness.overrides.Date = class extends RealDate {
+    constructor(...args) {
+      super(...(args.length ? args : ["2026-07-19T01:02:03Z"]));
+    }
+  };
   const context = loadGas(harness.overrides);
   context.__posts = {
     data: [
